@@ -139,7 +139,7 @@ jobs:
     name: Deploy
     needs: [test, validate-env]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push'
     
     steps:
       - name: Checkout repository
@@ -155,7 +155,17 @@ jobs:
           script: |
             set -e
             
-            DEPLOY_DIR="${{ secrets.DEPLOY_PATH }}"
+            # Branch-specific deployment with unique ports
+            BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+            BRANCH_SAFE=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9]/-/g' | head -c 20)
+            
+            # Generate unique port based on branch name hash (3000-3999 range)
+            PORT_OFFSET=$(echo "$BRANCH_NAME" | cksum | cut -d' ' -f1)
+            APP_PORT=$((3000 + (PORT_OFFSET % 1000)))
+            DB_PORT=$((5432 + (PORT_OFFSET % 1000)))
+            
+            DEPLOY_DIR="${{ secrets.DEPLOY_PATH }}-${BRANCH_SAFE}"
+            COMPOSE_PROJECT="fbpage-${BRANCH_SAFE}"
             
             # Create deployment directory
             mkdir -p "$DEPLOY_DIR"
@@ -164,7 +174,7 @@ jobs:
             cd "$DEPLOY_DIR"
             
             # Create docker-bake.hcl for better caching
-            cat > docker-bake.hcl << 'BAKE_EOF'
+            cat > docker-bake.hcl << BAKE_EOF
             group "default" {
               targets = ["app"]
             }
@@ -172,6 +182,7 @@ jobs:
             target "app" {
               context = "."
               dockerfile = "Dockerfile"
+              tags = ["fbpage-mm-bridge:${BRANCH_SAFE}"]
               cache-from = [
                 "type=local,src=/var/cache/docker/app"
               ]
@@ -181,14 +192,32 @@ jobs:
             }
             BAKE_EOF
             
+            # Create docker-compose override for branch-specific ports
+            cat > docker-compose.override.yml << OVERRIDE_EOF
+            services:
+              app:
+                ports:
+                  - "${APP_PORT}:3000"
+                environment:
+                  - SERVER_PORT=3000
+              db:
+                ports:
+                  - "${DB_PORT}:5432"
+            OVERRIDE_EOF
+            
             # Create cache directory
             mkdir -p /var/cache/docker/app
             
-            # Build Docker image on server with cache (no local build)
-            docker buildx bake --load
+            # Build Docker image on server with cache
+            docker buildx bake --allow=fs=/var/cache/docker/app --load
             
-            # Run and restart services
-            docker compose up -d --force-recreate
+            # Stop old containers for this branch only
+            docker compose -p ${COMPOSE_PROJECT} down --remove-orphans || true
+            
+            # Run services with branch-specific project name
+            docker compose -p ${COMPOSE_PROJECT} up -d --force-recreate
             
             # Cleanup old images
             docker image prune -f
+            
+            echo "Deployed ${BRANCH_NAME} to port ${APP_PORT}"
