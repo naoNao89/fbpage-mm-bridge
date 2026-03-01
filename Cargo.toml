@@ -1,0 +1,29 @@
+[package]
+name = "fbpage-mm-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "Bridge Facebook Page messages to Mattermost"
+
+[dependencies]
+tokio = { version = "1.42", features = ["full"] }
+axum = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+reqwest = { version = "0.11", features = ["json"] }
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "postgres"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+thiserror = "1.0"
+dotenvy = "0.15"
+envy = "0.4"
+
+# Pin transitive dependencies to avoid edition2024 issues
+getrandom = "=0.2.15"
+tempfile = "=3.14.0"
+rustix = "=0.38.42"
+base64ct = "=1.6.0"
+home = "=0.5.9"
+
+[profile.release]
+opt-level = 3
+lto = true
