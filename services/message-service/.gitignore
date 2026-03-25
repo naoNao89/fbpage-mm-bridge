@@ -1,0 +1,4 @@
+-e # Environment
+.env
+.env.local
+
