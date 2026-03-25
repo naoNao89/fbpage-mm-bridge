@@ -1,36 +1,146 @@
 services:
-  app:
+  # Customer Service - Manages customer data
+  customer-service:
     build:
-      context: .
+      context: ./services/customer-service
       dockerfile: Dockerfile
-    container_name: fbpage-mm-bridge
+    container_name: customer-service
     restart: unless-stopped
     ports:
-      - "${SERVER_PORT:-3000}:3000"
+      - "${CUSTOMER_SERVICE_PORT:-3001}:3001"
     environment:
-      - SERVER_HOST=0.0.0.0
-      - SERVER_PORT=3000
-      - DATABASE_URL=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-fbpage_bridge}
-      - DATABASE_MAX_CONNECTIONS=5
-      - MATTERMOST_WEBHOOK_URL=${MATTERMOST_WEBHOOK_URL}
-      - FACEBOOK_VERIFY_TOKEN=${FACEBOOK_VERIFY_TOKEN}
-      - FACEBOOK_ACCESS_TOKEN=${FACEBOOK_ACCESS_TOKEN}
+      - DATABASE_URL=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@customer-db:5432/${CUSTOMER_SERVICE_DB:-customer_service}
+      - DATABASE_MAX_CONNECTIONS=10
+      - BIND_ADDRESS=0.0.0.0:3001
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - RUST_BACKTRACE=1
     depends_on:
-      db:
+      customer-db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3001/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - fbpage-mm-network
 
-  db:
+  # Message Service - Stores messages from Facebook
+  message-service:
+    build:
+      context: ./services/message-service
+      dockerfile: Dockerfile
+    container_name: message-service
+    restart: unless-stopped
+    ports:
+      - "${MESSAGE_SERVICE_PORT:-3002}:3002"
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@message-db:5432/${MESSAGE_SERVICE_DB:-message_service}
+      - DATABASE_MAX_CONNECTIONS=10
+      - BIND_ADDRESS=0.0.0.0:3002
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - RUST_BACKTRACE=1
+      - CUSTOMER_SERVICE_URL=http://customer-service:3001
+    depends_on:
+      message-db:
+        condition: service_healthy
+      customer-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3002/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - fbpage-mm-network
+
+  # Facebook Graph Service - Fetches messages from Facebook API
+  facebook-graph-service:
+    build:
+      context: ./services/facebook-graph-service
+      dockerfile: Dockerfile
+    container_name: facebook-graph-service
+    restart: unless-stopped
+    ports:
+      - "${FACEBOOK_GRAPH_SERVICE_PORT:-3003}:3003"
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@facebook-db:5432/${FACEBOOK_GRAPH_DB:-facebook_graph}
+      - BIND_ADDRESS=0.0.0.0:3003
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - RUST_BACKTRACE=1
+      - FACEBOOK_PAGE_ID=${FACEBOOK_PAGE_ID:-982057698331908}
+      - FACEBOOK_PAGE_ACCESS_TOKEN=${FACEBOOK_PAGE_ACCESS_TOKEN}
+      - FACEBOOK_APP_ID=${FACEBOOK_APP_ID}
+      - FACEBOOK_APP_SECRET=${FACEBOOK_APP_SECRET}
+      - CUSTOMER_SERVICE_URL=http://customer-service:3001
+      - MESSAGE_SERVICE_URL=http://message-service:3002
+    depends_on:
+      facebook-db:
+        condition: service_healthy
+      customer-service:
+        condition: service_healthy
+      message-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3003/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - fbpage-mm-network
+
+  # PostgreSQL for Customer Service
+  customer-db:
     image: postgres:16-alpine
-    container_name: fbpage-mm-bridge-db
+    container_name: customer-service-db
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
-      - POSTGRES_DB=${POSTGRES_DB:-fbpage_bridge}
+      - POSTGRES_DB=${CUSTOMER_SERVICE_DB:-customer_service}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - customer_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fbpage-mm-network
+
+  # PostgreSQL for Message Service
+  message-db:
+    image: postgres:16-alpine
+    container_name: message-service-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${MESSAGE_SERVICE_DB:-message_service}
+    volumes:
+      - message_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fbpage-mm-network
+
+  # PostgreSQL for Facebook Graph Service
+  facebook-db:
+    image: postgres:16-alpine
+    container_name: facebook-graph-service-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${FACEBOOK_GRAPH_DB:-facebook_graph}
+    volumes:
+      - facebook_db_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 5s
@@ -40,7 +150,9 @@ services:
       - fbpage-mm-network
 
 volumes:
-  postgres_data:
+  customer_db_data:
+  message_db_data:
+  facebook_db_data:
 
 networks:
   fbpage-mm-network:
