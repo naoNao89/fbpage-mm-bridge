@@ -62,13 +62,19 @@ pub async fn import_all_conversations(
     let job_id = Uuid::new_v4();
     if let Err(e) = db::create_import_job(&state.pool, job_id, "running").await {
         error!("Failed to create import job: {}", e);
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Database error: {e}")));
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {e}"),
+        ));
     }
 
     // Update job as started
     if let Err(e) = db::update_import_job_started(&state.pool, job_id).await {
         error!("Failed to update import job: {}", e);
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Database error: {e}")));
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {e}"),
+        ));
     }
 
     // Fetch all conversations
@@ -77,7 +83,9 @@ pub async fn import_all_conversations(
         Ok(convs) => convs,
         Err(e) => {
             error!("Failed to fetch conversations: {}", e);
-            db::update_import_job_error(&state.pool, job_id, &e.to_string()).await.ok();
+            db::update_import_job_error(&state.pool, job_id, &e.to_string())
+                .await
+                .ok();
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Failed to fetch conversations: {e}"),
@@ -143,9 +151,7 @@ pub async fn import_all_conversations(
 
                 info!(
                     "✅ Completed conversation {}: {} messages fetched, {} stored",
-                    conversation.id,
-                    result.messages_fetched,
-                    result.messages_stored
+                    conversation.id, result.messages_fetched, result.messages_stored
                 );
             }
             Err(e) => {
@@ -231,7 +237,10 @@ pub async fn import_single_conversation(
     .await
     .map_err(|e| {
         error!("Failed to import conversation: {}", e);
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("Import failed: {e}"))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Import failed: {e}"),
+        )
     })?;
 
     Ok(Json(result))
@@ -245,7 +254,10 @@ pub async fn get_import_status(
         .await
         .map_err(|e| {
             error!("Failed to get import status: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Database error: {e}"))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Database error: {e}"),
+            )
         })?;
 
     Ok(Json(status))
@@ -281,9 +293,14 @@ pub async fn exchange_token(
         &request.short_lived_token,
         &state.config.facebook_app_id,
         &state.config.facebook_app_secret,
-    ).await {
+    )
+    .await
+    {
         Ok(response) => {
-            info!("Successfully exchanged token, expires in {} seconds", response.expires_in);
+            info!(
+                "Successfully exchanged token, expires in {} seconds",
+                response.expires_in
+            );
             Ok(Json(TokenExchangeResponse {
                 access_token: response.access_token,
                 token_type: response.token_type,
@@ -292,7 +309,10 @@ pub async fn exchange_token(
         }
         Err(e) => {
             error!("Token exchange failed: {}", e);
-            Err((StatusCode::BAD_REQUEST, format!("Token exchange failed: {e}")))
+            Err((
+                StatusCode::BAD_REQUEST,
+                format!("Token exchange failed: {e}"),
+            ))
         }
     }
 }
@@ -314,8 +334,7 @@ async fn process_conversation(
     let total_messages = messages.len();
     info!(
         "Fetched {} messages for conversation {}",
-        total_messages,
-        conversation_id
+        total_messages, conversation_id
     );
 
     let mut messages_stored = 0;
@@ -355,10 +374,7 @@ async fn process_conversation(
             .await
         {
             Ok(c) => {
-                debug!(
-                    "Customer resolved: {} (ID: {})",
-                    c.platform_user_id, c.id
-                );
+                debug!("Customer resolved: {} (ID: {})", c.platform_user_id, c.id);
                 c
             }
             Err(e) => {

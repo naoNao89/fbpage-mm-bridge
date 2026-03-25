@@ -1,5 +1,5 @@
 //! Facebook Graph API client
-//! 
+//!
 //! Handles all communication with Facebook Graph API including:
 //! - Fetching conversations
 //! - Fetching messages
@@ -28,7 +28,6 @@ const REQUEST_TIMEOUT_SECS: u64 = 30;
 
 /// Delay between pagination requests (ms)
 const PAGINATION_DELAY_MS: u64 = 500;
-
 
 // ============================================================================
 // Token Debugging
@@ -67,8 +66,10 @@ async fn detect_token_type(access_token: &str) -> Result<String> {
         ));
     }
 
-    let debug_response: DebugTokenResponse =
-        response.json().await.context("Failed to parse debug_token response")?;
+    let debug_response: DebugTokenResponse = response
+        .json()
+        .await
+        .context("Failed to parse debug_token response")?;
 
     info!("Detected token type: {}", debug_response.data.token_type);
     Ok(debug_response.data.token_type)
@@ -108,12 +109,8 @@ pub fn extract_rate_limit_from_response(
                     call_count: usage_json["call_count"].as_i64().map(|v| v as i32),
                     total_cputime: usage_json["total_cputime"].as_i64().map(|v| v as i32),
                     total_time: usage_json["total_time"].as_i64().map(|v| v as i32),
-                    call_count_limit: usage_json["call_count_limit"]
-                        .as_i64()
-                        .map(|v| v as i32),
-                    cputime_limit: usage_json["total_cputime_limit"]
-                        .as_i64()
-                        .map(|v| v as i32),
+                    call_count_limit: usage_json["call_count_limit"].as_i64().map(|v| v as i32),
+                    cputime_limit: usage_json["total_cputime_limit"].as_i64().map(|v| v as i32),
                     time_limit: usage_json["total_time_limit"].as_i64().map(|v| v as i32),
                 });
             }
@@ -188,13 +185,18 @@ pub async fn check_rate_limit_status(pool: &PgPool, endpoint: &str) -> Result<Ra
         let should_backoff = usage_percent >= 80.0;
 
         if usage_percent >= 95.0 {
-            warn!("Rate limit critical for {}: {:.1}% used", endpoint, usage_percent);
+            warn!(
+                "Rate limit critical for {}: {:.1}% used",
+                endpoint, usage_percent
+            );
         }
 
         Ok(RateLimitStatus {
             is_limited,
             usage_percent,
-            reset_at: limit.reset_at.unwrap_or_else(|| Utc::now() + chrono::Duration::hours(1)),
+            reset_at: limit
+                .reset_at
+                .unwrap_or_else(|| Utc::now() + chrono::Duration::hours(1)),
             should_backoff,
         })
     } else {
@@ -257,10 +259,7 @@ pub fn calculate_backoff_duration(usage_percent: f32) -> Duration {
 // ============================================================================
 
 /// Fetch all conversations from Facebook Graph API with pagination
-pub async fn get_conversations(
-    pool: &PgPool,
-    config: &Config,
-) -> Result<Vec<Conversation>> {
+pub async fn get_conversations(pool: &PgPool, config: &Config) -> Result<Vec<Conversation>> {
     let client = Client::new();
     let access_token = &config.facebook_page_access_token;
     let page_id = &config.facebook_page_id;
@@ -302,12 +301,12 @@ pub async fn get_conversations(
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await?;
-            
+
             // Check for rate limit
             if status.as_u16() == 429 || error_text.contains("request limit reached") {
                 return Err(anyhow::anyhow!("Facebook API rate limit reached"));
             }
-            
+
             // Check for permission errors
             if error_text.contains("code\":100") && error_text.contains("missing permissions") {
                 return Err(anyhow::anyhow!(
@@ -456,7 +455,7 @@ pub async fn exchange_token_for_long_lived(
     app_secret: &str,
 ) -> Result<TokenExchangeResponse> {
     let client = Client::new();
-    
+
     let url = format!(
         "{GRAPH_API_BASE}/oauth/access_token?\
             grant_type=fb_exchange_token\
@@ -464,16 +463,16 @@ pub async fn exchange_token_for_long_lived(
             &client_secret={app_secret}\
             &fb_exchange_token={short_lived_token}"
     );
-    
+
     info!("Exchanging short-lived token for long-lived token");
-    
+
     let response = client
         .get(&url)
         .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
         .send()
         .await
         .context("Failed to send token exchange request")?;
-    
+
     if !response.status().is_success() {
         let status = response.status();
         let error_text = response.text().await?;
@@ -481,18 +480,17 @@ pub async fn exchange_token_for_long_lived(
             "Token exchange failed: {status} - {error_text}"
         ));
     }
-    
+
     let exchange_response: TokenExchangeResponse = response
         .json()
         .await
         .context("Failed to parse token exchange response")?;
-    
+
     info!(
         "Successfully exchanged token. Token type: {}, expires in: {} seconds",
-        exchange_response.token_type,
-        exchange_response.expires_in
+        exchange_response.token_type, exchange_response.expires_in
     );
-    
+
     Ok(exchange_response)
 }
 

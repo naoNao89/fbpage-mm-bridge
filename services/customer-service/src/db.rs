@@ -14,7 +14,7 @@ pub async fn create_pool(database_url: &str) -> Result<PgPool> {
 }
 
 /// Get or create a customer by platform user ID
-/// 
+///
 /// This is the primary method for customer resolution. It first attempts to find
 /// an existing customer by platform_user_id and platform. If not found, it creates
 /// a new customer.
@@ -58,12 +58,10 @@ pub async fn get_or_create_customer(
 
 /// Get a customer by ID
 pub async fn get_customer_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Customer>> {
-    let customer = sqlx::query_as::<_, Customer>(
-        "SELECT * FROM customers WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
+    let customer = sqlx::query_as::<_, Customer>("SELECT * FROM customers WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
 
     Ok(customer)
 }
@@ -111,10 +109,7 @@ pub async fn update_customer(
 }
 
 /// List customers with optional filtering and pagination
-pub async fn list_customers(
-    pool: &PgPool,
-    query: &ListCustomersQuery,
-) -> Result<Vec<Customer>> {
+pub async fn list_customers(pool: &PgPool, query: &ListCustomersQuery) -> Result<Vec<Customer>> {
     let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM customers");
 
     if let Some(platform) = &query.platform {
@@ -169,12 +164,10 @@ pub async fn count_customers(pool: &PgPool) -> Result<i64> {
 
 /// Count customers by platform
 pub async fn count_customers_by_platform(pool: &PgPool, platform: &str) -> Result<i64> {
-    let count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM customers WHERE platform = $1",
-    )
-    .bind(platform)
-    .fetch_one(pool)
-    .await?;
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM customers WHERE platform = $1")
+        .bind(platform)
+        .fetch_one(pool)
+        .await?;
 
     Ok(count.0)
 }

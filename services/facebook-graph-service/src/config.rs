@@ -45,7 +45,8 @@ impl Config {
             bind_address: env::var("BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:3003".to_string()),
             log_level: env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
             database_url: env::var("DATABASE_URL").context("DATABASE_URL must be set")?,
-            facebook_page_id: env::var("FACEBOOK_PAGE_ID").context("FACEBOOK_PAGE_ID must be set")?,
+            facebook_page_id: env::var("FACEBOOK_PAGE_ID")
+                .context("FACEBOOK_PAGE_ID must be set")?,
             facebook_page_access_token: env::var("FACEBOOK_PAGE_ACCESS_TOKEN")
                 .context("FACEBOOK_PAGE_ACCESS_TOKEN must be set")?,
             facebook_app_id: env::var("FACEBOOK_APP_ID").unwrap_or_default(),

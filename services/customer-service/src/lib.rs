@@ -1,9 +1,9 @@
 //! Customer Service
-//! 
+//!
 //! A microservice for managing customer identity, profiles, and platform mappings.
-//! 
+//!
 //! ## API Endpoints
-//! 
+//!
 //! - `GET /health` - Health check
 //! - `GET /api/customers/:id` - Get customer by ID
 //! - `GET /api/customers/platform/:platform/:user_id` - Get customer by platform ID
@@ -46,17 +46,21 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/customers", post(create_or_get_customer))
         .route("/api/customers", get(list_customers))
         .route("/api/customers/stats", get(get_customer_stats))
-        .route("/api/customers/without-mapping", get(get_customers_without_mapping))
+        .route(
+            "/api/customers/without-mapping",
+            get(get_customers_without_mapping),
+        )
         .route("/api/customers/:id", get(get_customer))
         .route("/api/customers/:id", put(update_customer))
-        .route("/api/customers/platform/:platform/:user_id", get(get_customer_by_platform))
+        .route(
+            "/api/customers/platform/:platform/:user_id",
+            get(get_customer_by_platform),
+        )
         .with_state(state)
 }
 
 /// Run database migrations
 pub async fn run_migrations(pool: &PgPool) -> anyhow::Result<()> {
-    sqlx::migrate!("./migrations")
-        .run(pool)
-        .await?;
+    sqlx::migrate!("./migrations").run(pool).await?;
     Ok(())
 }

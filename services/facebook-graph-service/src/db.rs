@@ -84,11 +84,7 @@ pub async fn upsert_rate_limit(
 // ============================================================================
 
 /// Create a new import job
-pub async fn create_import_job(
-    pool: &PgPool,
-    job_id: Uuid,
-    status: &str,
-) -> anyhow::Result<()> {
+pub async fn create_import_job(pool: &PgPool, job_id: Uuid, status: &str) -> anyhow::Result<()> {
     sqlx::query(
         r#"
         INSERT INTO facebook_import_jobs (id, status, created_at, updated_at)
@@ -220,7 +216,11 @@ pub async fn update_import_job_completed(
 }
 
 /// Update import job with error
-pub async fn update_import_job_error(pool: &PgPool, job_id: Uuid, error: &str) -> anyhow::Result<()> {
+pub async fn update_import_job_error(
+    pool: &PgPool,
+    job_id: Uuid,
+    error: &str,
+) -> anyhow::Result<()> {
     sqlx::query(
         r#"
         UPDATE facebook_import_jobs
@@ -308,10 +308,7 @@ pub async fn create_conversation_import(
 }
 
 /// Update conversation import as started
-pub async fn update_conversation_import_started(
-    pool: &PgPool,
-    id: Uuid,
-) -> anyhow::Result<()> {
+pub async fn update_conversation_import_started(pool: &PgPool, id: Uuid) -> anyhow::Result<()> {
     sqlx::query(
         r#"
         UPDATE facebook_conversation_imports

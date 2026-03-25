@@ -5,9 +5,9 @@
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
     use message_service::models::{CreateMessageRequest, Message};
     use uuid::Uuid;
-    use chrono::Utc;
 
     /// Helper: creates a valid Facebook message request with given parameters
     fn facebook_message_request(
@@ -29,9 +29,9 @@ mod tests {
     fn test_create_message_request_accepts_valid_facebook_payload() {
         // Verify the request can accept any valid Facebook message format
         let request = facebook_message_request(
-            "t_987654321",        // conversation_id - any FB conversation ID format
-            "Hello, world!",      // message_text - any text content
-            "msg_abc123",         // external_id - any FB message ID
+            "t_987654321",   // conversation_id - any FB conversation ID format
+            "Hello, world!", // message_text - any text content
+            "msg_abc123",    // external_id - any FB message ID
         );
 
         // Verify all fields are set correctly
@@ -44,10 +44,13 @@ mod tests {
     #[test]
     fn test_create_message_request_serialization() {
         // Use generated values to avoid hardcoding
-        let conversation_id = format!("t_{}", Uuid::new_v4().to_string().replace("-", "")[..18].to_string());
+        let conversation_id = format!(
+            "t_{}",
+            Uuid::new_v4().to_string().replace("-", "")[..18].to_string()
+        );
         let message_text = format!("test_message_{}", Uuid::new_v4());
         let external_id = format!("msg_{}", Uuid::new_v4());
-        
+
         let request = facebook_message_request(&conversation_id, &message_text, &external_id);
 
         let json = serde_json::to_string(&request).unwrap();
@@ -75,7 +78,7 @@ mod tests {
 
         let response: message_service::models::MessageResponse = message.into();
         let json = serde_json::to_string(&response).unwrap();
-        
+
         // Verify response structure contains required fields
         assert!(json.contains("\"platform\":\"facebook\""));
         assert!(json.contains("\"direction\":\"incoming\""));
@@ -122,7 +125,7 @@ mod tests {
                 message_text: Some(msg_text.to_string()),
                 external_id: Some(format!("msg_{}", Uuid::new_v4())),
             };
-            
+
             // Verify serialization/deserialization works for any content
             let json = serde_json::to_string(&request).unwrap();
             let parsed: CreateMessageRequest = serde_json::from_str(&json).unwrap();
@@ -134,7 +137,7 @@ mod tests {
     fn test_multiple_platforms_supported() {
         // Verify the system can handle messages from different platforms
         let platforms = vec!["facebook", "zalo", "LINE"];
-        
+
         for platform in platforms {
             let request = CreateMessageRequest {
                 customer_id: Uuid::new_v4(),
@@ -144,7 +147,7 @@ mod tests {
                 message_text: Some("test".to_string()),
                 external_id: Some(format!("ext_{}", Uuid::new_v4())),
             };
-            
+
             assert_eq!(request.platform, platform);
             let json = serde_json::to_string(&request).unwrap();
             assert!(serde_json::from_str::<CreateMessageRequest>(&json).is_ok());

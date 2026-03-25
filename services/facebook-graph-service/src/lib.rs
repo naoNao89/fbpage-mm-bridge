@@ -26,7 +26,8 @@ use sqlx::PgPool;
 
 use crate::config::Config;
 use crate::handlers::{
-    exchange_token, get_import_status, health_check, import_all_conversations, import_single_conversation,
+    exchange_token, get_import_status, health_check, import_all_conversations,
+    import_single_conversation,
 };
 use crate::services::{CustomerServiceClient, MessageServiceClient};
 
@@ -46,7 +47,10 @@ pub fn create_app(state: AppState) -> Router {
         .route("/health", get(health_check))
         // Import endpoints
         .route("/api/import/conversations", post(import_all_conversations))
-        .route("/api/import/conversation/:id", post(import_single_conversation))
+        .route(
+            "/api/import/conversation/:id",
+            post(import_single_conversation),
+        )
         // Status endpoint
         .route("/api/status", get(get_import_status))
         // Token exchange endpoint
@@ -56,8 +60,6 @@ pub fn create_app(state: AppState) -> Router {
 
 /// Run database migrations
 pub async fn run_migrations(pool: &PgPool) -> anyhow::Result<()> {
-    sqlx::migrate!("./migrations")
-        .run(pool)
-        .await?;
+    sqlx::migrate!("./migrations").run(pool).await?;
     Ok(())
 }

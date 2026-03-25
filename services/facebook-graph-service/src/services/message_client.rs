@@ -63,12 +63,12 @@ impl MessageServiceClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await?;
-            
+
             // Check for duplicate (already exists)
             if status.as_u16() == 409 || error_text.contains("already exists") {
                 return Err(anyhow::anyhow!("message already exists"));
             }
-            
+
             return Err(anyhow::anyhow!(
                 "Message Service returned error {status}: {error_text}"
             ));

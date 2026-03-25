@@ -49,12 +49,10 @@ pub async fn save_message(
 
 /// Get a message by ID
 pub async fn get_message_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Message>> {
-    let message = sqlx::query_as::<_, Message>(
-        "SELECT * FROM messages WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
+    let message = sqlx::query_as::<_, Message>("SELECT * FROM messages WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
 
     Ok(message)
 }
@@ -178,11 +176,10 @@ pub async fn get_message_stats(pool: &PgPool) -> Result<MessageStats> {
         .fetch_one(pool)
         .await?;
 
-    let synced: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM messages WHERE mattermost_synced_at IS NOT NULL"
-    )
-    .fetch_one(pool)
-    .await?;
+    let synced: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM messages WHERE mattermost_synced_at IS NOT NULL")
+            .fetch_one(pool)
+            .await?;
 
     let unsynced: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM messages WHERE mattermost_synced_at IS NULL AND mattermost_sync_error IS NULL"
@@ -190,11 +187,10 @@ pub async fn get_message_stats(pool: &PgPool) -> Result<MessageStats> {
     .fetch_one(pool)
     .await?;
 
-    let sync_failed: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM messages WHERE mattermost_sync_error IS NOT NULL"
-    )
-    .fetch_one(pool)
-    .await?;
+    let sync_failed: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM messages WHERE mattermost_sync_error IS NOT NULL")
+            .fetch_one(pool)
+            .await?;
 
     Ok(MessageStats {
         total: total.0,
@@ -209,12 +205,10 @@ pub async fn get_message_by_external_id(
     pool: &PgPool,
     external_id: &str,
 ) -> Result<Option<Message>> {
-    let message = sqlx::query_as::<_, Message>(
-        "SELECT * FROM messages WHERE external_id = $1",
-    )
-    .bind(external_id)
-    .fetch_optional(pool)
-    .await?;
+    let message = sqlx::query_as::<_, Message>("SELECT * FROM messages WHERE external_id = $1")
+        .bind(external_id)
+        .fetch_optional(pool)
+        .await?;
 
     Ok(message)
 }

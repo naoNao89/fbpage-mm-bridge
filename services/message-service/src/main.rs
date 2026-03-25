@@ -7,11 +7,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 async fn main() -> anyhow::Result<()> {
     // Initialize logging
     let config = Config::from_env()?;
-    
+
     tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::new(&config.log_level),
-        )
+        .with(tracing_subscriber::EnvFilter::new(&config.log_level))
         .with(tracing_subscriber::fmt::layer())
         .init();
 
@@ -21,14 +19,15 @@ async fn main() -> anyhow::Result<()> {
     // Create database connection pool
     info!("Connecting to database...");
     let pool = db::create_pool(&config.database_url).await?;
-    
+
     // Run migrations
     info!("Running database migrations...");
     run_migrations(&pool).await?;
-    
+
     // Create Customer Service client
-    let customer_client = message_service::services::CustomerServiceClient::new(&config.customer_service_url);
-    
+    let customer_client =
+        message_service::services::CustomerServiceClient::new(&config.customer_service_url);
+
     // Create application state
     let state = AppState {
         pool,

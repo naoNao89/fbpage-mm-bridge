@@ -1,9 +1,9 @@
 //! Message Service
-//! 
+//!
 //! A microservice for storing and managing messages from various platforms (Facebook, etc.).
-//! 
+//!
 //! ## API Endpoints
-//! 
+//!
 //! - `GET /health` - Health check
 //! - `POST /api/messages` - Store new message
 //! - `GET /api/messages/:id` - Get message by ID
@@ -50,16 +50,23 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/messages/unsynced", get(get_unsynced_messages))
         .route("/api/messages/:id", get(get_message))
         .route("/api/messages/:id/synced", put(mark_message_synced))
-        .route("/api/messages/:id/sync-failed", put(mark_message_sync_failed))
-        .route("/api/messages/customer/:customer_id", get(get_messages_by_customer))
-        .route("/api/messages/conversation/:conversation_id", get(get_messages_by_conversation))
+        .route(
+            "/api/messages/:id/sync-failed",
+            put(mark_message_sync_failed),
+        )
+        .route(
+            "/api/messages/customer/:customer_id",
+            get(get_messages_by_customer),
+        )
+        .route(
+            "/api/messages/conversation/:conversation_id",
+            get(get_messages_by_conversation),
+        )
         .with_state(state)
 }
 
 /// Run database migrations
 pub async fn run_migrations(pool: &PgPool) -> anyhow::Result<()> {
-    sqlx::migrate!("./migrations")
-        .run(pool)
-        .await?;
+    sqlx::migrate!("./migrations").run(pool).await?;
     Ok(())
 }
