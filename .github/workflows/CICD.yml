@@ -185,7 +185,7 @@ jobs:
             mkdir -p /var/cache/docker/app
             
             # Build Docker image on server with cache (no local build)
-            docker buildx bake --load
+            docker buildx bake --allow=fs=/var/cache/docker/app --load
             
             # Run and restart services
             docker compose up -d --force-recreate
