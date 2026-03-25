@@ -1,14 +1,15 @@
 //! Facebook Graph Service
-//! 
+//!
 //! A microservice for fetching messages from Facebook Graph API and storing them
 //! via the Message Service.
-//! 
+//!
 //! ## API Endpoints
-//! 
+//!
 //! - `GET /health` - Health check
 //! - `POST /api/import/conversations` - Start import for all conversations
 //! - `POST /api/import/conversation/:id` - Import single conversation
 //! - `GET /api/status` - Get import status
+//! - `POST /api/token/exchange` - Exchange short-lived token for long-lived token
 
 pub mod config;
 pub mod db;
@@ -25,7 +26,7 @@ use sqlx::PgPool;
 
 use crate::config::Config;
 use crate::handlers::{
-    get_import_status, health_check, import_all_conversations, import_single_conversation,
+    exchange_token, get_import_status, health_check, import_all_conversations, import_single_conversation,
 };
 use crate::services::{CustomerServiceClient, MessageServiceClient};
 
@@ -48,6 +49,8 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/import/conversation/:id", post(import_single_conversation))
         // Status endpoint
         .route("/api/status", get(get_import_status))
+        // Token exchange endpoint
+        .route("/api/token/exchange", post(exchange_token))
         .with_state(state)
 }
 

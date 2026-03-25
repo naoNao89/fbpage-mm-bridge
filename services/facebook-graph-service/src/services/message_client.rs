@@ -9,6 +9,7 @@ use uuid::Uuid;
 /// Payload for storing a message
 #[derive(Debug, Serialize)]
 pub struct MessageServicePayload {
+    pub conversation_id: String,
     pub customer_id: Uuid,
     pub platform: String,
     pub direction: String,

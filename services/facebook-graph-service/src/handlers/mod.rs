@@ -2,6 +2,7 @@
 
 use anyhow::Context;
 use axum::{extract::State, http::StatusCode, Json};
+use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -9,6 +10,21 @@ use uuid::Uuid;
 use crate::db;
 use crate::graph_api;
 use crate::models::{ConversationImportResult, ImportResponse, ImportStatusResponse};
+
+/// Request body for token exchange
+#[derive(Debug, Deserialize)]
+pub struct TokenExchangeRequest {
+    /// Short-lived user access token from Facebook Login
+    pub short_lived_token: String,
+}
+
+/// Response from token exchange
+#[derive(Debug, Serialize)]
+pub struct TokenExchangeResponse {
+    pub access_token: String,
+    pub token_type: String,
+    pub expires_in: i64,
+}
 use crate::services::MessageServicePayload;
 use crate::AppState;
 
@@ -235,6 +251,52 @@ pub async fn get_import_status(
     Ok(Json(status))
 }
 
+/// Exchange short-lived token for long-lived token
+/// POST /api/token/exchange
+pub async fn exchange_token(
+    State(state): State<AppState>,
+    Json(request): Json<TokenExchangeRequest>,
+) -> Result<Json<TokenExchangeResponse>, (StatusCode, String)> {
+    info!("Received token exchange request");
+
+    // Validate that app credentials are configured
+    if state.config.facebook_app_id.is_empty() {
+        error!("FACEBOOK_APP_ID not configured");
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "FACEBOOK_APP_ID environment variable must be set".to_string(),
+        ));
+    }
+
+    if state.config.facebook_app_secret.is_empty() {
+        error!("FACEBOOK_APP_SECRET not configured");
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "FACEBOOK_APP_SECRET environment variable must be set".to_string(),
+        ));
+    }
+
+    // Perform token exchange
+    match graph_api::exchange_token_for_long_lived(
+        &request.short_lived_token,
+        &state.config.facebook_app_id,
+        &state.config.facebook_app_secret,
+    ).await {
+        Ok(response) => {
+            info!("Successfully exchanged token, expires in {} seconds", response.expires_in);
+            Ok(Json(TokenExchangeResponse {
+                access_token: response.access_token,
+                token_type: response.token_type,
+                expires_in: response.expires_in,
+            }))
+        }
+        Err(e) => {
+            error!("Token exchange failed: {}", e);
+            Err((StatusCode::BAD_REQUEST, format!("Token exchange failed: {e}")))
+        }
+    }
+}
+
 /// Process a single conversation - fetch messages and store via services
 async fn process_conversation(
     state: &AppState,
@@ -307,6 +369,7 @@ async fn process_conversation(
 
         // Store message via Message Service
         let message_payload = MessageServicePayload {
+            conversation_id: conversation_id.to_string(),
             customer_id: customer.id,
             platform: "facebook".to_string(),
             direction: direction.to_string(),

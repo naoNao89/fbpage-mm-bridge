@@ -14,6 +14,10 @@ pub struct Config {
     pub facebook_page_id: String,
     /// Facebook Page Access Token
     pub facebook_page_access_token: String,
+    /// Facebook App ID (for token exchange)
+    pub facebook_app_id: String,
+    /// Facebook App Secret (for token exchange)
+    pub facebook_app_secret: String,
     /// Customer Service URL
     pub customer_service_url: String,
     /// Message Service URL
@@ -44,6 +48,8 @@ impl Config {
             facebook_page_id: env::var("FACEBOOK_PAGE_ID").context("FACEBOOK_PAGE_ID must be set")?,
             facebook_page_access_token: env::var("FACEBOOK_PAGE_ACCESS_TOKEN")
                 .context("FACEBOOK_PAGE_ACCESS_TOKEN must be set")?,
+            facebook_app_id: env::var("FACEBOOK_APP_ID").unwrap_or_default(),
+            facebook_app_secret: env::var("FACEBOOK_APP_SECRET").unwrap_or_default(),
             customer_service_url: env::var("CUSTOMER_SERVICE_URL")
                 .context("CUSTOMER_SERVICE_URL must be set")?,
             message_service_url: env::var("MESSAGE_SERVICE_URL")

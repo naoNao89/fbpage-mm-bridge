@@ -444,6 +444,70 @@ pub async fn debug_token(access_token: &str) -> Result<String> {
     detect_token_type(access_token).await
 }
 
+/// Exchange a short-lived user access token for a long-lived token
+///
+/// This uses the Facebook OAuth endpoint to exchange a short-lived token
+/// obtained from the Facebook Login flow for a long-lived token (60 days).
+///
+/// See: https://developers.facebook.com/docs/facebook-login/guides/access-long-lived-tokens
+pub async fn exchange_token_for_long_lived(
+    short_lived_token: &str,
+    app_id: &str,
+    app_secret: &str,
+) -> Result<TokenExchangeResponse> {
+    let client = Client::new();
+    
+    let url = format!(
+        "{GRAPH_API_BASE}/oauth/access_token?\
+            grant_type=fb_exchange_token\
+            &client_id={app_id}\
+            &client_secret={app_secret}\
+            &fb_exchange_token={short_lived_token}"
+    );
+    
+    info!("Exchanging short-lived token for long-lived token");
+    
+    let response = client
+        .get(&url)
+        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .send()
+        .await
+        .context("Failed to send token exchange request")?;
+    
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await?;
+        return Err(anyhow::anyhow!(
+            "Token exchange failed: {status} - {error_text}"
+        ));
+    }
+    
+    let exchange_response: TokenExchangeResponse = response
+        .json()
+        .await
+        .context("Failed to parse token exchange response")?;
+    
+    info!(
+        "Successfully exchanged token. Token type: {}, expires in: {} seconds",
+        exchange_response.token_type,
+        exchange_response.expires_in
+    );
+    
+    Ok(exchange_response)
+}
+
+/// Response from token exchange endpoint
+#[derive(Debug, Deserialize)]
+pub struct TokenExchangeResponse {
+    /// The long-lived access token
+    pub access_token: String,
+    /// Token type (should be "bearer")
+    #[serde(rename = "token_type")]
+    pub token_type: String,
+    /// Seconds until the token expires
+    pub expires_in: i64,
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
