@@ -22,7 +22,7 @@ use axum::{
     routing::{get, post, put},
     Router,
 };
-use sqlx::PgPool;
+pub use sqlx::PgPool;
 
 use crate::config::Config;
 use crate::handlers::{
