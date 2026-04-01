@@ -31,8 +31,10 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     curl \
     gcc \
+    pkg-config \
     postgresql-client \
     libssl3 \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy release test binaries
