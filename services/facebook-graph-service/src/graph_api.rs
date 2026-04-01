@@ -74,9 +74,7 @@ async fn detect_token_type(access_token: &str, app_id: &str, app_secret: &str) -
     Ok(debug_response.data.token_type)
 }
 
-
 // URL Builders
-
 
 /// Build URL for fetching conversations
 fn build_conversations_url(page_id: &str, access_token: &str) -> String {
@@ -92,9 +90,7 @@ fn build_messages_url(conversation_id: &str, access_token: &str) -> String {
     )
 }
 
-
 // Rate Limit Handling
-
 
 /// Extract rate limit info from Facebook API response headers
 pub fn extract_rate_limit_from_response(
@@ -253,9 +249,7 @@ pub fn calculate_backoff_duration(usage_percent: f32) -> Duration {
     }
 }
 
-
 // Conversation Fetching
-
 
 /// Fetch all conversations from Facebook Graph API with pagination
 pub async fn get_conversations(pool: &PgPool, config: &Config) -> Result<Vec<Conversation>> {
@@ -264,7 +258,12 @@ pub async fn get_conversations(pool: &PgPool, config: &Config) -> Result<Vec<Con
     let page_id = &config.facebook_page_id;
 
     // Verify token type
-    let token_type = detect_token_type(access_token, &config.facebook_app_id, &config.facebook_app_secret).await?;
+    let token_type = detect_token_type(
+        access_token,
+        &config.facebook_app_id,
+        &config.facebook_app_secret,
+    )
+    .await?;
     info!("Token type: {}", token_type);
 
     let mut all_conversations = Vec::new();
@@ -344,9 +343,7 @@ pub async fn get_conversations(pool: &PgPool, config: &Config) -> Result<Vec<Con
     Ok(all_conversations)
 }
 
-
 // Message Fetching
-
 
 /// Fetch all messages for a conversation with pagination
 pub async fn get_conversation_messages(
@@ -433,9 +430,7 @@ pub async fn get_conversation_messages(
     Ok(all_messages)
 }
 
-
 // Token Operations
-
 
 /// Debug/verify an access token
 pub async fn debug_token(access_token: &str, app_id: &str, app_secret: &str) -> Result<String> {
@@ -505,9 +500,7 @@ pub struct TokenExchangeResponse {
     pub expires_in: i64,
 }
 
-
 // Tests
-
 
 #[cfg(test)]
 mod tests {
