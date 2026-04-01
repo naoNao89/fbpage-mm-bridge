@@ -151,6 +151,27 @@ jobs:
           - customer-service
           - message-service
           - facebook-graph-service
+        include:
+          - service: customer-service
+            db_name: customer_service
+          - service: message-service
+            db_name: message_service
+          - service: facebook-graph-service
+            db_name: facebook_graph
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
     steps:
       - uses: actions/checkout@v4
         with:
@@ -159,6 +180,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Create database for ${{ matrix.service }}
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE ${{ matrix.db_name }};" || true
       - name: Check service ${{ matrix.service }}
         run: |
           cd services/${{ matrix.service }}
@@ -172,6 +196,8 @@ jobs:
           cd services/${{ matrix.service }}
           cargo clippy -- -D warnings
       - name: Test ${{ matrix.service }}
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost/${{ matrix.db_name }}
         run: |
           cd services/${{ matrix.service }}
           cargo test
