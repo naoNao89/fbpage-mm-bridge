@@ -2,49 +2,42 @@ FROM rust:1.88-slim-bookworm as builder
 
 WORKDIR /app
 
-# Install dependencies
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy manifests
 COPY Cargo.toml Cargo.lock* ./
+COPY services/customer-service/Cargo.toml services/customer-service/
+COPY services/message-service/Cargo.toml services/message-service/
+COPY services/facebook-graph-service/Cargo.toml services/facebook-graph-service/
 
-# Create dummy source for dependency caching
 RUN mkdir -p src && echo "fn main() {}" > src/main.rs
+RUN mkdir -p services/customer-service/src && echo 'fn main() {}' > services/customer-service/src/main.rs
+RUN mkdir -p services/message-service/src && echo 'fn main() {}' > services/message-service/src/main.rs
+RUN mkdir -p services/facebook-graph-service/src && echo 'fn main() {}' > services/facebook-graph-service/src/main.rs
 
-# Build dependencies (with dummy main)
-RUN cargo build --release && rm -rf src
+RUN cargo build --release --package facebook-graph-service && rm -rf src services/*/src
 
-# Copy migrations for sqlx compile-time check
-COPY migrations ./migrations
+COPY services/facebook-graph-service/migrations services/facebook-graph-service/migrations
+COPY services/facebook-graph-service/src services/facebook-graph-service/src
 
-# Copy actual source
-COPY src ./src
+RUN touch services/facebook-graph-service/src/main.rs && cargo build --release --package facebook-graph-service
 
-# Build the application
-RUN touch src/main.rs && cargo build --release
-
-# Runtime image
 FROM debian:bookworm-slim
 
 WORKDIR /app
 
-# Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy binary from builder
 COPY --from=builder /app/target/release/facebook-graph-service /usr/local/bin/
 
-# Copy migrations
-COPY --from=builder /app/migrations ./migrations
+COPY services/facebook-graph-service/migrations ./migrations
 
-# Copy .env.example as default
 COPY .env.example .env
 
 EXPOSE 3003

@@ -1,43 +1,38 @@
-# Build stage
 FROM rust:1.83-alpine AS builder
 
 WORKDIR /app
 
-# Install build dependencies
 RUN apk add --no-cache \
     musl-dev \
     openssl-dev \
     pkgconfig
 
-# Copy manifests
 COPY Cargo.toml Cargo.lock* ./
+COPY services/customer-service/Cargo.toml services/customer-service/
+COPY services/message-service/Cargo.toml services/message-service/
+COPY services/facebook-graph-service/Cargo.toml services/facebook-graph-service/
 
-# Create dummy src for caching
 RUN mkdir -p src && echo 'fn main() {}' > src/main.rs
+RUN mkdir -p services/customer-service/src && echo 'fn main() {}' > services/customer-service/src/main.rs
+RUN mkdir -p services/message-service/src && echo 'fn main() {}' > services/message-service/src/main.rs
+RUN mkdir -p services/facebook-graph-service/src && echo 'fn main() {}' > services/facebook-graph-service/src/main.rs
 
-# Build dependencies (cached layer)
-RUN cargo build --release && rm -rf src
+RUN cargo build --release && rm -rf src services/*/src
 
-# Copy source code
 COPY src ./src
 
-# Build application
 RUN cargo build --release
 
-# Runtime stage
 FROM alpine:3.19
 
 WORKDIR /app
 
-# Install runtime dependencies
 RUN apk add --no-cache \
     ca-certificates \
     libssl3
 
-# Copy binary from builder
 COPY --from=builder /app/target/release/fbpage-mm-bridge /app/fbpage-mm-bridge
 
-# Create non-root user
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 USER appuser
 
