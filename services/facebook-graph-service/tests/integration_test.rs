@@ -9,7 +9,9 @@ mod tests {
         use chrono::Utc;
         use facebook_graph_service::config::Config;
         use facebook_graph_service::graph_api;
-        use facebook_graph_service::services::{CustomerServiceClient, MessageServiceClient, MessageServicePayload};
+        use facebook_graph_service::services::{
+            CustomerServiceClient, MessageServiceClient, MessageServicePayload,
+        };
         use sqlx::postgres::PgPoolOptions;
         use std::time::Duration;
         use uuid::Uuid;
@@ -148,14 +150,22 @@ mod tests {
             let message_client = MessageServiceClient::new(&config.message_service_url);
 
             for msg in messages.iter().take(5) {
-                let (direction, customer_id, customer_name) = if msg.from.id == config.facebook_page_id {
-                    let recipient = msg.to.data.first()
-                        .map(|p| (p.id.clone(), p.name.clone()))
-                        .unwrap_or_else(|| ("unknown".to_string(), "Unknown".to_string()));
-                    ("outgoing".to_string(), recipient.0, Some(recipient.1))
-                } else {
-                    ("incoming".to_string(), msg.from.id.clone(), Some(msg.from.name.clone()))
-                };
+                let (direction, customer_id, customer_name) =
+                    if msg.from.id == config.facebook_page_id {
+                        let recipient = msg
+                            .to
+                            .data
+                            .first()
+                            .map(|p| (p.id.clone(), p.name.clone()))
+                            .unwrap_or_else(|| ("unknown".to_string(), "Unknown".to_string()));
+                        ("outgoing".to_string(), recipient.0, Some(recipient.1))
+                    } else {
+                        (
+                            "incoming".to_string(),
+                            msg.from.id.clone(),
+                            Some(msg.from.name.clone()),
+                        )
+                    };
 
                 let customer = match customer_client
                     .get_or_create_customer(&customer_id, "facebook", customer_name.as_deref())

@@ -14,9 +14,8 @@ use customer_service::{
     config::Config,
     create_app, db,
     models::{CreateCustomerRequest, CustomerResponse, UpdateCustomerRequest},
-    AppState,
+    AppState, PgPool,
 };
-use serde_json::json;
 use tower::ServiceExt; // for oneshot
 use uuid::Uuid;
 
