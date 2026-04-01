@@ -1,0 +1,55 @@
+# ==============================================================================
+# Stage 1: Build test binaries in release mode (stripped symbols)
+# ==============================================================================
+FROM rust:slim-bookworm AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    libssl-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy source
+COPY . .
+
+# Build tests in RELEASE mode (smaller binaries with stripped debug info)
+RUN cargo build --release --workspace
+
+# Compile tests
+RUN cargo test --release --workspace --no-run
+
+# ==============================================================================
+# Stage 2: Minimal runtime
+# ==============================================================================
+FROM debian:bookworm-slim
+
+WORKDIR /app
+
+# Runtime dependencies only
+RUN apt-get update && apt-get install -y \
+    curl \
+    gcc \
+    postgresql-client \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy release test binaries
+RUN cp /app/target/release/test* /usr/local/bin/ 2>/dev/null || true
+COPY --from=builder /app/target/release/deps /usr/local/cargo/deps
+
+# Copy source for test structure
+COPY --from=builder /app/services /app/services
+COPY --from=builder /app/src /app/src
+COPY --from=builder /app/Cargo.toml /app/
+COPY --from=builder /app/Cargo.lock /app/
+
+# Install minimal cargo
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+
+ENV PATH="/root/.cargo/bin:$PATH"
+ENV RUST_BACKTRACE=1
+ENV TEST_LOG_LEVEL=debug
+
+CMD ["cargo", "test", "--release", "--workspace", "--", "--test-threads=1"]
