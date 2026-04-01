@@ -1,60 +1,50 @@
-# Build stage
 FROM rust:1.88-bookworm as builder
 
 WORKDIR /app
 
-# Install build dependencies
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy manifests
 COPY Cargo.toml Cargo.lock* ./
+COPY services/customer-service/Cargo.toml services/customer-service/
+COPY services/message-service/Cargo.toml services/message-service/
+COPY services/facebook-graph-service/Cargo.toml services/facebook-graph-service/
 
-# Create dummy main.rs to build dependencies
-RUN mkdir src && \
-    echo "fn main() {}" > src/main.rs && \
-    cargo build --release && \
-    rm -rf src
+RUN mkdir -p src && echo 'fn main() {}' > src/main.rs
+RUN mkdir -p services/customer-service/src && echo 'fn main() {}' > services/customer-service/src/main.rs
+RUN mkdir -p services/message-service/src && echo 'fn main() {}' > services/message-service/src/main.rs
+RUN mkdir -p services/facebook-graph-service/src && echo 'fn main() {}' > services/facebook-graph-service/src/main.rs
 
-COPY migrations ./migrations
+RUN cargo build --release --package customer-service && rm -rf src services/*/src
 
-# Copy actual source code
-COPY src ./src
+COPY services/customer-service/migrations services/customer-service/migrations
+COPY services/customer-service/src services/customer-service/src
 
-# Build the application
-RUN touch src/main.rs && \
-    cargo build --release
+RUN touch services/customer-service/src/main.rs && \
+    cargo build --release --package customer-service
 
-# Runtime stage
 FROM debian:bookworm-slim
 
-# Install runtime dependencies
 RUN apt-get update && \
     apt-get install -y ca-certificates libssl3 curl && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy the binary from builder
 COPY --from=builder /app/target/release/customer-service /app/customer-service
 
-# Copy migrations
-COPY migrations ./migrations
+COPY services/customer-service/migrations ./migrations
 
-# Create non-root user
 RUN useradd -r -s /bin/false appuser && \
     chown -R appuser:appuser /app
 
 USER appuser
 
-# Expose port
 EXPOSE 3001
 
-# Set environment variables
 ENV BIND_ADDRESS=0.0.0.0:3001
 ENV LOG_LEVEL=info
 
-# Run the application
 CMD ["./customer-service"]
