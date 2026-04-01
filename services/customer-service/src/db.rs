@@ -174,7 +174,6 @@ pub async fn count_customers_by_platform(pool: &PgPool, platform: &str) -> Resul
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_build_query_with_platform() {
