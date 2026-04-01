@@ -23,6 +23,8 @@ tempfile = "=3.14.0"
 rustix = "=0.38.42"
 base64ct = "=1.6.0"
 home = "=0.5.9"
+native-tls = "=0.2.12"
+security-framework = "=2.11.1"
 
 [profile.release]
 opt-level = 3
