@@ -1,4 +1,4 @@
-FROM rust:1.75-slim-bookworm as builder
+FROM rust:1.88-slim-bookworm as builder
 
 WORKDIR /app
 
@@ -17,6 +17,9 @@ RUN mkdir -p src && echo "fn main() {}" > src/main.rs
 # Build dependencies (with dummy main)
 RUN cargo build --release && rm -rf src
 
+# Copy migrations for sqlx compile-time check
+COPY migrations ./migrations
+
 # Copy actual source
 COPY src ./src
 
@@ -32,6 +35,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy binary from builder

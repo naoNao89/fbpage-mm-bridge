@@ -1,4 +1,4 @@
-name: CI/CD
+name: CI
 
 on:
   push:
@@ -10,42 +10,72 @@ env:
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: sccache
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
-  # Validate GitHub Secrets match required environment variables
-  validate-secrets:
-    name: Validate Secrets
+  fmt:
+    name: Format
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate required secrets are set
-        run: |
-          if [ -z "${{ secrets.SSH_HOST }}" ]; then
-            echo "::error::SSH_HOST secret is not set"
-            exit 1
-          fi
-          
-          if [ -z "${{ secrets.SSH_USERNAME }}" ]; then
-            echo "::error::SSH_USERNAME secret is not set"
-            exit 1
-          fi
-          
-          if [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
-            echo "::error::SSH_PRIVATE_KEY secret is not set"
-            exit 1
-          fi
-          
-          if [ -z "${{ secrets.DEPLOY_PATH }}" ]; then
-            echo "::error::DEPLOY_PATH secret is not set"
-            exit 1
-          fi
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
 
-  # CI: Build and Test (Rust code only, with sccache)
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install sccache
+        run: |
+          SCCACHE_VERSION=0.7.7
+          curl -L "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar xz
+          sudo mv sccache-*/sccache /usr/local/bin/sccache
+          chmod +x /usr/local/bin/sccache
+
+      - name: Cache sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
+        with:
+          version: "v0.7.7"
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Run clippy
+        run: cargo clippy -- -D warnings
+
   test:
     name: Test
     runs-on: ubuntu-latest
-    needs: validate-secrets
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -81,114 +111,53 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev
 
-      - name: Start sccache server
-        run: sccache --start-server
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Run clippy
-        run: cargo clippy -- -D warnings
-
       - name: Build
         run: cargo build --verbose
-
-      - name: Show sccache stats
-        run: sccache --show-stats
 
       - name: Run tests
         run: cargo test --verbose
 
-  # Validate environment configuration
-  validate-env:
-    name: Validate Environment
+  docker-integration:
+    name: Docker Integration
     runs-on: ubuntu-latest
-    needs: validate-secrets
+    needs: [fmt, clippy, test]
+    env:
+      FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
+      FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
+      FACEBOOK_APP_ID: ${{ secrets.FACEBOOK_APP_ID }}
+      FACEBOOK_APP_SECRET: ${{ secrets.FACEBOOK_APP_SECRET }}
+      MATTERMOST_WEBHOOK_URL: ${{ secrets.MATTERMOST_WEBHOOK_URL }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate .env.example has required variables
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build all services
+        run: docker compose -f docker-compose.test.yml build
+
+      - name: Start all services
+        run: docker compose -f docker-compose.test.yml up -d
+
+      - name: Wait for services to be healthy
         run: |
-          required_vars=(
-            "SERVER_HOST"
-            "SERVER_PORT"
-            "POSTGRES_USER"
-            "POSTGRES_PASSWORD"
-            "POSTGRES_DB"
-            "DATABASE_MAX_CONNECTIONS"
-            "MATTERMOST_WEBHOOK_URL"
-            "FACEBOOK_VERIFY_TOKEN"
-            "FACEBOOK_ACCESS_TOKEN"
-          )
-          
-          missing=()
-          for var in "${required_vars[@]}"; do
-            if ! grep -q "^${var}=" .env.example; then
-              missing+=("$var")
-            fi
-          done
-          
-          if [ ${#missing[@]} -ne 0 ]; then
-            echo "::error::Missing required variables in .env.example: ${missing[*]}"
-            exit 1
-          fi
+          timeout 300 bash -c '
+            while ! docker compose -f docker-compose.test.yml ps --format json | grep -q "\"Health\":\"healthy\""; do
+              sleep 10
+            done
+          '
 
-  # CD: Deploy to server - build Docker image on target server with cache
-  deploy:
-    name: Deploy
-    needs: [test, validate-env]
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Run integration tests
+        run: |
+          docker compose -f docker-compose.test.yml up test-runner --abort-on-container-exit --exit-code-from test-runner
 
-      # Deploy to server via SSH - copy files and build on server with cache
-      - name: Deploy to server
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            set -e
-            
-            DEPLOY_DIR="${{ secrets.DEPLOY_PATH }}"
-            
-            # Create deployment directory
-            mkdir -p "$DEPLOY_DIR"
-            
-            # Change to deployment directory
-            cd "$DEPLOY_DIR"
-            
-            # Create docker-bake.hcl for better caching
-            cat > docker-bake.hcl << 'BAKE_EOF'
-            group "default" {
-              targets = ["app"]
-            }
-            
-            target "app" {
-              context = "."
-              dockerfile = "Dockerfile"
-              cache-from = [
-                "type=local,src=/var/cache/docker/app"
-              ]
-              cache-to = [
-                "type=local,dest=/var/cache/docker/app,mode=max"
-              ]
-            }
-            BAKE_EOF
-            
-            # Create cache directory
-            mkdir -p /var/cache/docker/app
-            
-            # Build Docker image on server with cache (no local build)
-            docker buildx bake --allow=fs=/var/cache/docker/app --load
-            
-            # Run and restart services
-            docker compose up -d --force-recreate
-            
-            # Cleanup old images
-            docker image prune -f
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.test.yml logs
+
+      - name: Cleanup
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
+
+

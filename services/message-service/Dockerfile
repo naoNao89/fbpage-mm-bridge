@@ -1,5 +1,5 @@
 # Build stage
-FROM rust:1.75-bookworm as builder
+FROM rust:1.88-bookworm as builder
 
 WORKDIR /app
 
@@ -11,6 +11,8 @@ RUN mkdir src && \
     echo "fn main() {}" > src/main.rs && \
     cargo build --release && \
     rm -rf src
+
+COPY migrations ./migrations
 
 # Copy actual source code
 COPY src ./src
@@ -24,7 +26,7 @@ FROM debian:bookworm-slim
 
 # Install runtime dependencies
 RUN apt-get update && \
-    apt-get install -y ca-certificates libssl3 && \
+    apt-get install -y ca-certificates libssl3 curl && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

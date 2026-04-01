@@ -21,9 +21,7 @@ pub async fn create_pool(database_url: &str) -> anyhow::Result<PgPool> {
     Ok(pool)
 }
 
-// ============================================================================
 // Rate Limit Operations
-// ============================================================================
 
 /// Check if an endpoint is currently rate limited
 pub async fn is_rate_limited(pool: &PgPool, endpoint: &str) -> anyhow::Result<bool> {
@@ -79,9 +77,7 @@ pub async fn upsert_rate_limit(
     Ok(())
 }
 
-// ============================================================================
 // Import Job Operations
-// ============================================================================
 
 /// Create a new import job
 pub async fn create_import_job(pool: &PgPool, job_id: Uuid, status: &str) -> anyhow::Result<()> {
@@ -279,9 +275,7 @@ pub async fn get_latest_import_status(pool: &PgPool) -> anyhow::Result<ImportSta
     }
 }
 
-// ============================================================================
 // Conversation Import Operations
-// ============================================================================
 
 /// Create a conversation import record
 pub async fn create_conversation_import(
