@@ -6,9 +6,12 @@ on:
   pull_request:
     branches: [main, master]
 
+permissions:
+  contents: read
+
 env:
-  CARGO_TERM_COLOR: always
-  RUSTC_WRAPPER: sccache
+  CARGO_INCREMENTAL: "0"
+  RUST_MIN_SRV: "1.75.0"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,108 +22,164 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  spellcheck:
+    name: Spell Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run codespell
+        uses: codespell-project/actions-codespell@v2
+        with:
+          skip: ".git,./.vscode,./target,./tests/fixtures"
+          ignore-words-list: "crate"
+          path: "."
+          flags: "--write-changes"
+
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: macos-latest
+          - os: windows-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-
-      - name: Install sccache
-        run: |
-          SCCACHE_VERSION=0.7.7
-          curl -L "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar xz
-          sudo mv sccache-*/sccache /usr/local/bin/sccache
-          chmod +x /usr/local/bin/sccache
-
-      - name: Cache sccache
-        uses: mozilla-actions/sccache-action@v0.0.4
-        with:
-          version: "v0.7.7"
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev
-
+      - uses: Swatinem/rust-cache@v2
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-  test:
-    name: Test
+  build:
+    name: Build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            toolchain: stable
+          - os: macos-latest
+            toolchain: stable
+          - os: windows-latest
+            toolchain: stable
+          - os: ubuntu-latest
+            toolchain: nightly
+          - os: macos-latest
+            toolchain: nightly
+          - os: windows-latest
+            toolchain: nightly
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --workspace --all-features
+      - name: Run tests
+        run: cargo test --workspace --all-features
+
+  cargo-deny:
+    name: Cargo deny
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install sccache
-        run: |
-          SCCACHE_VERSION=0.7.7
-          curl -L "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar xz
-          sudo mv sccache-*/sccache /usr/local/bin/sccache
-          chmod +x /usr/local/bin/sccache
-
-      - name: Cache sccache
-        uses: mozilla-actions/sccache-action@v0.0.4
+      - uses: actions/checkout@v4
         with:
-          version: "v0.7.7"
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@v2
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+  min_version:
+    name: MSRV Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_MIN_SRV }}
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Check Cargo.lock is compatible with MSRV
+        run: cargo fetch --locked --quiet
+      - name: Build with MSRV
+        run: cargo build --locked
+      - name: Run tests with MSRV
+        run: cargo test --locked
 
-      - name: Install dependencies
+  doc_warnings:
+    name: Documentation Warnings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Check documentation warnings
+        run: RUSTDOCFLAGS="-Dwarnings" cargo doc --workspace --no-deps --document-private-items
+
+  test-services:
+    name: Test services
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - customer-service
+          - message-service
+          - facebook-graph-service
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Check service ${{ matrix.service }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev
-
-      - name: Build
-        run: cargo build --verbose
-
-      - name: Run tests
-        run: cargo test --verbose
+          cd services/${{ matrix.service }}
+          cargo check
+      - name: Format check ${{ matrix.service }}
+        run: |
+          cd services/${{ matrix.service }}
+          cargo fmt -- --check
+      - name: Clippy check ${{ matrix.service }}
+        run: |
+          cd services/${{ matrix.service }}
+          cargo clippy -- -D warnings
+      - name: Test ${{ matrix.service }}
+        run: |
+          cd services/${{ matrix.service }}
+          cargo test
 
   docker-integration:
     name: Docker Integration
     runs-on: ubuntu-latest
-    needs: [fmt, clippy, test]
+    needs: [fmt, clippy, build, min_version]
     env:
       FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
       FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
@@ -128,11 +187,10 @@ jobs:
       FACEBOOK_APP_SECRET: ${{ secrets.FACEBOOK_APP_SECRET }}
       MATTERMOST_WEBHOOK_URL: ${{ secrets.MATTERMOST_WEBHOOK_URL }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v3
 
       - name: Build all services
         run: docker compose -f docker-compose.test.yml build
@@ -159,5 +217,3 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker compose -f docker-compose.test.yml down -v
-
-
