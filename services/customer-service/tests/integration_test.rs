@@ -172,7 +172,7 @@ async fn test_get_customer_by_id() {
         .oneshot(
             Request::builder()
                 .method(Method::GET)
-                .uri(&format!("/api/customers/{}", customer.id))
+                .uri(format!("/api/customers/{}", customer.id))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -202,7 +202,7 @@ async fn test_get_customer_by_id_not_found() {
         .oneshot(
             Request::builder()
                 .method(Method::GET)
-                .uri(&format!("/api/customers/{}", non_existent_id))
+                .uri(format!("/api/customers/{}", non_existent_id))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -274,7 +274,7 @@ async fn test_update_customer() {
         .oneshot(
             Request::builder()
                 .method(Method::PUT)
-                .uri(&format!("/api/customers/{}", customer.id))
+                .uri(format!("/api/customers/{}", customer.id))
                 .header("Content-Type", "application/json")
                 .body(Body::from(serde_json::to_string(&update_request).unwrap()))
                 .unwrap(),
