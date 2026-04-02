@@ -45,6 +45,7 @@ pub fn test_message_for_customer(customer_id: Uuid) -> Message {
 /// Generate a test message with dynamically generated Facebook-style data
 pub fn test_facebook_message() -> Message {
     let id = Uuid::new_v4();
+    let customer_id = Uuid::new_v4();
     let conversation_id = fb_conversation_id();
     let message_text = format!("fb_message_{}", Uuid::new_v4());
     let external_id = format!("m_{}", Uuid::new_v4());
