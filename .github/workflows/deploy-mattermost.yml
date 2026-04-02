@@ -21,18 +21,12 @@ jobs:
           script_stop: true
           debug: true
           script: |
-            set -euo pipefail
-
-            LOG_FILE="/tmp/deploy-debug-$(date +%s).log"
-            exec > >(tee -a "$LOG_FILE") 2>&1
-
+            LOG="/tmp/deploy-$(date +%s).log"
+            bash -x -euo pipefail -c '
             echo "=== DEPLOY STARTED ==="
             echo "USER=${USER:-unset}"
             echo "HOME=${HOME:-unset}"
-            echo "SHELL=${SHELL:-unset}"
-            echo "PATH=${PATH:-unset}"
-
-            # Ensure USER is set (non-interactive SSH may not have it)
+            echo "PWD=$(pwd)"
             export USER="${USER:-$(whoami)}"
             echo "USER after export: $USER"
 
@@ -41,39 +35,35 @@ jobs:
             export ADMIN_PW_FILE_HOST="$SECRETS_DIR/admin_password"
             export ADMIN_PW_FILE_IN_CONTAINER="/mattermost/config/bootstrap_admin_password"
 
+            echo "Step: mkdir"
             sudo mkdir -p "$STACK_DIR" "$SECRETS_DIR"
+            echo "Step: chown"
             sudo chown -R "$USER":"$USER" "$STACK_DIR"
 
-            # Sync repo into place
+            echo "Step: sync repo"
             if [ ! -d "$STACK_DIR/.git" ]; then
               if [ -d "$STACK_DIR" ] && [ -n "$(ls -A "$STACK_DIR" 2>/dev/null)" ]; then
                 echo "Warning: $STACK_DIR exists but is not a git repo. Removing and re-cloning."
                 rm -rf "$STACK_DIR"
               fi
-              git clone --depth=1 https://github.com/${{ github.repository }} "$STACK_DIR"
+              git clone --depth=1 https://github.com/naoNao89/fbpage-mm-bridge "$STACK_DIR"
             else
               cd "$STACK_DIR"
               git fetch --depth=1 origin main
               git reset --hard origin/main
             fi
             cd "$STACK_DIR"
+            echo "Step: env setup done"
 
-            # Site URL/domain from secrets if present (optional)
             export MM_DOMAIN="${{ secrets.MM_DOMAIN }}"
             export MM_SITE_URL="${{ secrets.MM_SITE_URL }}"
-
-            # Admin identity from secrets (email/username should be provided)
             export MM_ADMIN_EMAIL="${{ secrets.MM_ADMIN_EMAIL }}"
             export MM_ADMIN_USERNAME="${{ secrets.MM_ADMIN_USERNAME }}"
-
-            # Bot identity from secrets
             export MM_BOT_USERNAME="${{ secrets.MM_BOT_USERNAME }}"
             export MM_BOT_DISPLAY_NAME="${{ secrets.MM_BOT_DISPLAY_NAME }}"
             export MM_BOT_DESCRIPTION="${{ secrets.MM_BOT_DESCRIPTION }}"
 
-            # Admin password:
-            # - if MM_ADMIN_PASSWORD secret is set, use it
-            # - else generate once and persist on the server, reused on later deploys
+            echo "Step: password setup"
             if [ -n "${{ secrets.MM_ADMIN_PASSWORD }}" ]; then
               export MM_ADMIN_PASSWORD="${{ secrets.MM_ADMIN_PASSWORD }}"
               echo "Using MM_ADMIN_PASSWORD from GitHub Secrets."
@@ -84,41 +74,40 @@ jobs:
                 export MM_ADMIN_PASSWORD="$(cat "$ADMIN_PW_FILE_HOST")"
                 echo "Reusing existing generated admin password from $ADMIN_PW_FILE_HOST"
               else
-                # Generates a 24-char URL-safe password
-                export MM_ADMIN_PASSWORD="$(openssl rand -base64 36 | tr -d '\n' | tr '+/' '-_' | cut -c1-24)"
+                export MM_ADMIN_PASSWORD="$(openssl rand -base64 36 | tr -d "\n" | tr "+/" "-_" | cut -c1-24)"
                 printf "%s" "$MM_ADMIN_PASSWORD" > "$ADMIN_PW_FILE_HOST"
                 chmod 600 "$ADMIN_PW_FILE_HOST"
                 echo "Generated new admin password and stored at $ADMIN_PW_FILE_HOST"
               fi
             fi
 
-            # Ensure env exists (optional)
+            echo "Step: env file"
             if [ ! -f .env ]; then
               cp .env.example .env || true
             fi
 
+            echo "Step: docker pull"
             docker compose pull || {
               echo "Pull failed, building locally..."
               docker compose build
             }
+            echo "Step: docker up"
             docker compose up -d
 
-            # Copy the password into the mattermost container so user can check "inside container"
-            # If your container name differs, adjust it (see `docker ps`).
+            echo "Step: password copy"
             MM_CONTAINER_ID="$(docker compose ps -q mattermost)"
             if [ -n "$MM_CONTAINER_ID" ]; then
-              docker exec "$MM_CONTAINER_ID" sh -lc "printf '%s' \"$MM_ADMIN_PASSWORD\" > '$ADMIN_PW_FILE_IN_CONTAINER' && chmod 600 '$ADMIN_PW_FILE_IN_CONTAINER'"
+              docker exec "$MM_CONTAINER_ID" sh -lc "printf \"%s\" \"$MM_ADMIN_PASSWORD\" > \"$ADMIN_PW_FILE_IN_CONTAINER\" && chmod 600 \"$ADMIN_PW_FILE_IN_CONTAINER\""
               echo "Stored admin password inside container at: $ADMIN_PW_FILE_IN_CONTAINER"
             else
-              echo "WARNING: Could not find Mattermost container id (docker compose ps -q mattermost returned empty)."
+              echo "WARNING: Could not find Mattermost container"
             fi
 
-            # Bootstrap admin + bot (expects scripts/bootstrap-mm.sh in repo)
+            echo "Step: bootstrap"
             bash ./scripts/bootstrap-mm.sh
 
-            echo ""
-            echo "To view the generated admin password on the server:"
-            echo "  sudo cat $ADMIN_PW_FILE_HOST"
-            echo ""
-            echo "To view it inside the Mattermost container:"
-            echo "  docker exec -it $MM_CONTAINER_ID sh -lc 'cat $ADMIN_PW_FILE_IN_CONTAINER'"
+            echo "=== DEPLOY COMPLETED ==="
+            ' > "$LOG" 2>&1
+            echo "EXIT_CODE=$?"
+            cat "$LOG"
+            exit "$EXIT_CODE"
