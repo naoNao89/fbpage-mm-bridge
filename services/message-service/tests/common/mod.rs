@@ -7,11 +7,16 @@ use chrono::Utc;
 use message_service::models::Message;
 use uuid::Uuid;
 
+fn fb_conversation_id() -> String {
+    let raw = Uuid::new_v4().to_string().replace("-", "");
+    format!("t_{}", &raw[..18])
+}
+
 /// Generate a test message with dynamically generated values
 pub fn test_message() -> Message {
     let id = Uuid::new_v4();
     let customer_id = Uuid::new_v4();
-    let conversation_id = format!("t_{}", Uuid::new_v4().to_string().replace("-", "")[..18]);
+    let conversation_id = fb_conversation_id();
     let message_text = format!("test_message_{}", Uuid::new_v4());
     let external_id = format!("msg_{}", Uuid::new_v4());
 
@@ -41,7 +46,7 @@ pub fn test_message_for_customer(customer_id: Uuid) -> Message {
 pub fn test_facebook_message() -> Message {
     let id = Uuid::new_v4();
     let customer_id = Uuid::new_v4();
-    let conversation_id = format!("t_{}", Uuid::new_v4().to_string().replace("-", "")[..18]);
+    let conversation_id = fb_conversation_id();
     let message_text = format!("fb_message_{}", Uuid::new_v4());
     let external_id = format!("m_{}", Uuid::new_v4());
 
