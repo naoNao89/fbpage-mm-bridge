@@ -22,9 +22,6 @@ jobs:
           script: |
             set -euo pipefail
 
-            # Ensure USER is set (non-interactive SSH may not have it)
-            export USER="${USER:-$(whoami)}"
-
             export STACK_DIR="/opt/mattermost"
             export SECRETS_DIR="$STACK_DIR/secrets"
             export ADMIN_PW_FILE_HOST="$SECRETS_DIR/admin_password"
@@ -86,10 +83,7 @@ jobs:
               cp .env.example .env || true
             fi
 
-            docker compose pull || {
-              echo "Pull failed, building locally..."
-              docker compose build
-            }
+            docker compose pull
             docker compose up -d
 
             # Copy the password into the mattermost container so user can check "inside container"
