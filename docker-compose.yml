@@ -1,7 +1,7 @@
 services:
   # Customer Service - Manages customer data
   customer-service:
-    image: ghcr.io/naoNao89/fbpage-mm-bridge/customer-service:latest
+    image: ghcr.io/naonao89/fbpage-mm-bridge/customer-service:latest
     container_name: customer-service
     restart: unless-stopped
     ports:
@@ -26,7 +26,7 @@ services:
 
   # Message Service - Stores messages from Facebook
   message-service:
-    image: ghcr.io/naoNao89/fbpage-mm-bridge/message-service:latest
+    image: ghcr.io/naonao89/fbpage-mm-bridge/message-service:latest
     container_name: message-service
     restart: unless-stopped
     ports:
@@ -54,7 +54,7 @@ services:
 
   # Facebook Graph Service - Fetches messages from Facebook API
   facebook-graph-service:
-    image: ghcr.io/naoNao89/fbpage-mm-bridge/facebook-graph-service:latest
+    image: ghcr.io/naonao89/fbpage-mm-bridge/facebook-graph-service:latest
     container_name: facebook-graph-service
     restart: unless-stopped
     ports:
