@@ -12,17 +12,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -p 22 ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
-
       - name: Deploy via SSH
-        run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} '
-            set -euo pipefail
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script_stop: true
+          script: |
+            set -x
             export USER="${USER:-$(whoami)}"
 
             export STACK_DIR="/opt/mattermost"
@@ -64,7 +62,7 @@ jobs:
                 export MM_ADMIN_PASSWORD="$(cat "$ADMIN_PW_FILE_HOST")"
                 echo "Reusing existing generated admin password from $ADMIN_PW_FILE_HOST"
               else
-                export MM_ADMIN_PASSWORD="$(openssl rand -base64 36 | tr -d '"'"'\n'"'"' | tr '"'"'+/'"'"' '"'"'-_'"'"' | cut -c1-24)"
+                export MM_ADMIN_PASSWORD="$(openssl rand -base64 36 | tr -d '\n' | tr '+/' '-_' | cut -c1-24)"
                 printf "%s" "$MM_ADMIN_PASSWORD" > "$ADMIN_PW_FILE_HOST"
                 chmod 600 "$ADMIN_PW_FILE_HOST"
                 echo "Generated new admin password and stored at $ADMIN_PW_FILE_HOST"
@@ -83,7 +81,7 @@ jobs:
 
             MM_CONTAINER_ID="$(docker compose ps -q mattermost)"
             if [ -n "$MM_CONTAINER_ID" ]; then
-              docker exec "$MM_CONTAINER_ID" sh -lc "printf '"'"'%s'"'"' \"\$MM_ADMIN_PASSWORD\" > '"'"'$ADMIN_PW_FILE_IN_CONTAINER'"'"' && chmod 600 '"'"'$ADMIN_PW_FILE_IN_CONTAINER'"'"'"
+              docker exec "$MM_CONTAINER_ID" sh -lc "printf '%s' \"$MM_ADMIN_PASSWORD\" > '$ADMIN_PW_FILE_IN_CONTAINER' && chmod 600 '$ADMIN_PW_FILE_IN_CONTAINER'"
               echo "Stored admin password inside container at: $ADMIN_PW_FILE_IN_CONTAINER"
             else
               echo "WARNING: Could not find Mattermost container"
@@ -92,4 +90,3 @@ jobs:
             bash ./scripts/bootstrap-mm.sh
 
             echo "Deploy complete"
-          '
