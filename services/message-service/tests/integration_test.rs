@@ -43,7 +43,8 @@ mod tests {
 
     #[test]
     fn test_create_message_request_serialization() {
-        let conversation_id = format!("t_{}", Uuid::new_v4().to_string().replace("-", "")[..18]);
+        let raw_uuid = Uuid::new_v4().to_string().replace("-", "");
+        let conversation_id = format!("t_{}", &raw_uuid[..18]);
         let message_text = format!("test_message_{}", Uuid::new_v4());
         let external_id = format!("msg_{}", Uuid::new_v4());
 

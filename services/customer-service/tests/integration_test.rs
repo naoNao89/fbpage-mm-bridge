@@ -331,7 +331,10 @@ async fn test_list_customers() {
     let customers: Vec<CustomerResponse> = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(customers.len(), 3);
-    let user_ids: Vec<&str> = customers.iter().map(|c| c.platform_user_id.as_str()).collect();
+    let user_ids: Vec<&str> = customers
+        .iter()
+        .map(|c| c.platform_user_id.as_str())
+        .collect();
     assert!(user_ids.contains(&"list_user_1"));
     assert!(user_ids.contains(&"list_user_2"));
     assert!(user_ids.contains(&"list_user_3"));
