@@ -29,7 +29,7 @@ use crate::handlers::{
     exchange_token, get_import_status, health_check, import_all_conversations,
     import_single_conversation,
 };
-use crate::services::{CustomerServiceClient, MessageServiceClient};
+use crate::services::{CustomerServiceClient, MessageServiceClient, MattermostClient};
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -38,6 +38,7 @@ pub struct AppState {
     pub config: Config,
     pub customer_client: CustomerServiceClient,
     pub message_client: MessageServiceClient,
+    pub mattermost_client: MattermostClient,
 }
 
 /// Create the application router

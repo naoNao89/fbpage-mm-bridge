@@ -397,6 +397,32 @@ async fn process_conversation(
         match state.message_client.store_message(message_payload).await {
             Ok(_) => {
                 messages_stored += 1;
+                // Attempt to post to Mattermost as a normal conversation (threaded)
+                // Best-effort: log and continue on failure
+                let mm = &state.mattermost_client;
+                // Ensure token and fetch team/channel, post message
+                if let Ok(team_id) = mm.get_team_id().await {
+                    if let Ok(channel_id) = mm
+                        .get_or_create_channel(&team_id, conversation_id, conversation_id)
+                        .await
+                    {
+                        let root_id_opt = mm.get_root_id(conversation_id).await?;
+                        let root_id_slice = root_id_opt.as_deref();
+                        match mm.post_message(&channel_id, msg.message.as_deref().unwrap_or(""), root_id_slice).await {
+                            Ok(post_id) => {
+                                if root_id_opt.is_none() {
+                                    // store root_id for threading
+                                    mm.set_root_id(conversation_id, &post_id);
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Mattermost post failed for conversation {}: {}", conversation_id, e);
+                            }
+                        }
+                    }
+                } else {
+                    warn!("Could not determine Mattermost team_id for conversation {}", conversation_id);
+                }
             }
             Err(e) if e.to_string().contains("already exists") => {
                 // Duplicate - expected on re-runs
