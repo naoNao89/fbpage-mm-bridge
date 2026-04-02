@@ -442,7 +442,7 @@ pub async fn debug_token(access_token: &str, app_id: &str, app_secret: &str) -> 
 /// This uses the Facebook OAuth endpoint to exchange a short-lived token
 /// obtained from the Facebook Login flow for a long-lived token (60 days).
 ///
-/// See: https://developers.facebook.com/docs/facebook-login/guides/access-long-lived-tokens
+/// See: <https://developers.facebook.com/docs/facebook-login/guides/access-long-lived-tokens>
 pub async fn exchange_token_for_long_lived(
     short_lived_token: &str,
     app_id: &str,
