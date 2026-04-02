@@ -406,6 +406,38 @@ async fn test_customer_stats() {
         .await
         .unwrap();
 
+    // Verify created customers exist via list endpoint (handles stale data from previous runs)
+    let created_users = ["stats_user_1", "stats_user_2", "stats_user_3"];
+    let created_ids: std::collections::HashSet<String> =
+        created_users.iter().cloned().map(String::from).collect();
+
+    let list_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/customers")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let list_body = axum::body::to_bytes(list_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let customers: Vec<CustomerResponse> = serde_json::from_slice(&list_body).unwrap();
+
+    let found_count = customers
+        .iter()
+        .filter(|c| created_ids.contains(&c.platform_user_id))
+        .count();
+    assert!(
+        found_count >= 3,
+        "Expected at least 3 created customers, found {}. Total: {}",
+        found_count,
+        customers.len()
+    );
+
     // Get stats
     let response = app
         .oneshot(
@@ -425,9 +457,23 @@ async fn test_customer_stats() {
         .unwrap();
     let stats: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-    assert!(stats["total"].as_i64().unwrap() >= 3);
-    assert!(stats["by_platform"]["facebook"].as_i64().unwrap() >= 2);
-    assert!(stats["by_platform"]["zalo"].as_i64().unwrap() >= 1);
+    // Stats must be consistent with the created customers we verified exist
+    assert!(
+        stats["total"].as_i64().unwrap() >= found_count as i64,
+        "total {} should be >= found_count {}",
+        stats["total"],
+        found_count
+    );
+    assert!(
+        stats["by_platform"]["facebook"].as_i64().unwrap() >= 2,
+        "facebook count {} should be >= 2",
+        stats["by_platform"]["facebook"]
+    );
+    assert!(
+        stats["by_platform"]["zalo"].as_i64().unwrap() >= 1,
+        "zalo count {} should be >= 1",
+        stats["by_platform"]["zalo"]
+    );
 
     pool.close().await;
 }
