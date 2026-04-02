@@ -23,10 +23,9 @@ allow = [
   "ISC",
   "BSD-2-Clause",
   "BSD-3-Clause",
-  "CC0-1.0",
   "Unicode-3.0",
   "Zlib",
-  "MPL-2.0",
+  "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 
@@ -43,7 +42,33 @@ highlight = "all"
 # spell-checker: disable
 skip = [
   # various crates
+  { name = "windows-sys", version = "0.48.0" },
+  { name = "windows-sys", version = "0.52.0" },
   { name = "windows-sys", version = "0.59.0" },
+  { name = "windows-sys", version = "0.61.2" },
+  { name = "hashbrown", version = "0.15.5" },
+  { name = "hashbrown", version = "0.16.1" },
+  { name = "thiserror", version = "1.0.69" },
+  { name = "thiserror", version = "2.0.18" },
+  { name = "thiserror-impl", version = "1.0.69" },
+  { name = "thiserror-impl", version = "2.0.18" },
+  # windows-sys transitive deps (0.48.x vs 0.52.x)
+  { name = "windows-targets", version = "0.48.5" },
+  { name = "windows-targets", version = "0.52.6" },
+  { name = "windows_aarch64_gnullvm", version = "0.48.5" },
+  { name = "windows_aarch64_gnullvm", version = "0.52.6" },
+  { name = "windows_aarch64_msvc", version = "0.48.5" },
+  { name = "windows_aarch64_msvc", version = "0.52.6" },
+  { name = "windows_i686_gnu", version = "0.48.5" },
+  { name = "windows_i686_gnu", version = "0.52.6" },
+  { name = "windows_i686_msvc", version = "0.48.5" },
+  { name = "windows_i686_msvc", version = "0.52.6" },
+  { name = "windows_x86_64_gnu", version = "0.48.5" },
+  { name = "windows_x86_64_gnu", version = "0.52.6" },
+  { name = "windows_x86_64_gnullvm", version = "0.48.5" },
+  { name = "windows_x86_64_gnullvm", version = "0.52.6" },
+  { name = "windows_x86_64_msvc", version = "0.48.5" },
+  { name = "windows_x86_64_msvc", version = "0.52.6" },
 ]
 # spell-checker: enable
 
