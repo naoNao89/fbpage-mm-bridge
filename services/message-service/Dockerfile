@@ -22,7 +22,7 @@ RUN cargo build --release --package message-service && rm -rf src services/*/src
 COPY services/message-service/migrations services/message-service/migrations
 COPY services/message-service/src services/message-service/src
 
-RUN touch src/main.rs services/message-service/src/main.rs && \
+RUN mkdir -p src services/message-service/src && touch src/main.rs services/message-service/src/main.rs && \
     cargo build --release --package message-service
 
 FROM debian:bookworm-slim
