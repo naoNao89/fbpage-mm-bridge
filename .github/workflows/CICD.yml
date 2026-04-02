@@ -97,7 +97,7 @@ jobs:
       - name: Build
         run: cargo build --workspace --all-features
       - name: Run tests
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --all-features --lib --bins
 
   cargo-deny:
     name: Cargo deny
