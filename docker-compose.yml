@@ -184,12 +184,6 @@ services:
     depends_on:
       mattermost-db:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8065/api/v4/system/ping || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 60s
     networks:
       - fbpage-mm-network
 
