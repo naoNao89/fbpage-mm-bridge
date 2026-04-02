@@ -70,8 +70,8 @@ services:
   # Customer Service - Manages customer data
   customer-service:
     build:
-      context: ./services/customer-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/customer-service/Dockerfile
     container_name: fbpage-mm-test-customer-service
     restart: "no"
     ports:
@@ -98,8 +98,8 @@ services:
   # Message Service - Stores messages from Facebook
   message-service:
     build:
-      context: ./services/message-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/message-service/Dockerfile
     container_name: fbpage-mm-test-message-service
     restart: "no"
     ports:
@@ -129,8 +129,8 @@ services:
   # Facebook Graph Service - Fetches messages from Facebook API
   facebook-graph-service:
     build:
-      context: ./services/facebook-graph-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/facebook-graph-service/Dockerfile
     container_name: fbpage-mm-test-facebook-graph-service
     restart: "no"
     ports:
