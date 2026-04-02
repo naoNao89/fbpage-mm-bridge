@@ -82,7 +82,7 @@ impl CustomerServiceClient {
 
     /// Get customer by ID
     pub async fn get_customer(&self, id: Uuid) -> anyhow::Result<CustomerServiceResponse> {
-        let url = format!("{}/api/customers/{}", self.base_url, id);
+        let url = format!("{}/api/customers/{id}", self.base_url);
 
         let response = self
             .client

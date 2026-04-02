@@ -84,7 +84,7 @@ impl MessageServiceClient {
 
     /// Get message by ID
     pub async fn get_message(&self, id: Uuid) -> anyhow::Result<MessageServiceResponse> {
-        let url = format!("{}/api/messages/{}", self.base_url, id);
+        let url = format!("{}/api/messages/{id}", self.base_url);
 
         let response = self
             .client

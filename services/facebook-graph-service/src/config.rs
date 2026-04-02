@@ -22,6 +22,11 @@ pub struct Config {
     pub customer_service_url: String,
     /// Message Service URL
     pub message_service_url: String,
+    /// Mattermost REST API URL
+    pub mattermost_url: String,
+    /// Mattermost admin username
+    pub mattermost_username: String,
+    pub mattermost_password: Option<String>,
     /// Rate limit warning threshold (percentage)
     #[serde(default = "default_rate_limit_warning_threshold")]
     pub rate_limit_warning_threshold: f32,
@@ -55,6 +60,11 @@ impl Config {
                 .context("CUSTOMER_SERVICE_URL must be set")?,
             message_service_url: env::var("MESSAGE_SERVICE_URL")
                 .context("MESSAGE_SERVICE_URL must be set")?,
+            mattermost_url: env::var("MATTERMOST_URL")
+                .unwrap_or_else(|_| "http://localhost:8065".to_string()),
+            mattermost_username: env::var("MATTERMOST_USERNAME")
+                .unwrap_or_else(|_| "admin".to_string()),
+            mattermost_password: env::var("MATTERMOST_PASSWORD").ok(),
             rate_limit_warning_threshold: env::var("RATE_LIMIT_WARNING_THRESHOLD")
                 .unwrap_or_else(|_| "80.0".to_string())
                 .parse()
