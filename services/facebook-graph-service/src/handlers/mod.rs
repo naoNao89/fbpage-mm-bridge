@@ -156,7 +156,7 @@ pub async fn import_all_conversations(
             }
             Err(e) => {
                 failed += 1;
-                let error_msg = format!("Conversation {}: {}", conversation.id, e);
+                let error_msg = format!("Conversation {}: {e}", conversation.id);
                 errors.push(error_msg.clone());
 
                 db::update_conversation_import_error(&state.pool, conv_import_id, &e.to_string())
@@ -408,7 +408,14 @@ async fn process_conversation(
                     {
                         let root_id_opt = mm.get_root_id(conversation_id).await?;
                         let root_id_slice = root_id_opt.as_deref();
-                        match mm.post_message(&channel_id, msg.message.as_deref().unwrap_or(""), root_id_slice).await {
+                        match mm
+                            .post_message(
+                                &channel_id,
+                                msg.message.as_deref().unwrap_or(""),
+                                root_id_slice,
+                            )
+                            .await
+                        {
                             Ok(post_id) => {
                                 if root_id_opt.is_none() {
                                     // store root_id for threading
@@ -416,12 +423,18 @@ async fn process_conversation(
                                 }
                             }
                             Err(e) => {
-                                warn!("Mattermost post failed for conversation {}: {}", conversation_id, e);
+                                warn!(
+                                    "Mattermost post failed for conversation {}: {}",
+                                    conversation_id, e
+                                );
                             }
                         }
                     }
                 } else {
-                    warn!("Could not determine Mattermost team_id for conversation {}", conversation_id);
+                    warn!(
+                        "Could not determine Mattermost team_id for conversation {}",
+                        conversation_id
+                    );
                 }
             }
             Err(e) if e.to_string().contains("already exists") => {

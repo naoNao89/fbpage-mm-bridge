@@ -157,14 +157,14 @@ mod tests {
         #[test]
         fn test_message_service_base_url() {
             let base_url = "http://localhost:3002";
-            let api_url = format!("{}/api/messages", base_url);
+            let api_url = format!("{base_url}/api/messages");
             assert_eq!(api_url, "http://localhost:3002/api/messages");
         }
 
         #[test]
         fn test_customer_service_base_url() {
             let base_url = "http://localhost:3001";
-            let api_url = format!("{}/api/customers", base_url);
+            let api_url = format!("{base_url}/api/customers");
             assert_eq!(api_url, "http://localhost:3001/api/customers");
         }
 
@@ -179,7 +179,7 @@ mod tests {
         fn test_get_message_by_id_url() {
             let base_url = "http://localhost:3002";
             let message_id = "123e4567-e89b-12d3-a456-426614174000";
-            let url = format!("{}/api/messages/{}", base_url, message_id);
+            let url = format!("{base_url}/api/messages/{message_id}");
             assert!(url.contains(message_id));
         }
 
@@ -187,7 +187,7 @@ mod tests {
         fn test_get_customer_by_id_url() {
             let base_url = "http://localhost:3001";
             let customer_id = "123e4567-e89b-12d3-a456-426614174000";
-            let url = format!("{}/api/customers/{}", base_url, customer_id);
+            let url = format!("{base_url}/api/customers/{customer_id}");
             assert!(url.contains(customer_id));
         }
     }
@@ -211,7 +211,7 @@ mod tests {
         #[test]
         fn test_error_status_code_extraction() {
             let status = 500;
-            let error_msg = format!("Service returned error {}", status);
+            let error_msg = format!("Service returned error {status}");
             assert!(error_msg.contains("500"));
         }
 

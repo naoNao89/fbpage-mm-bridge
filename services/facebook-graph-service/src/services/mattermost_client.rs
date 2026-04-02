@@ -79,10 +79,7 @@ impl MattermostClient {
         // Token is returned in the header "Token"
         if let Some(token_header) = resp.headers().get("Token") {
             if let Ok(token_str) = token_header.to_str() {
-                let mut tok = self
-                    .token
-                    .lock()
-                    .expect("token lock poisoned");
+                let mut tok = self.token.lock().expect("token lock poisoned");
                 *tok = Some(token_str.to_string());
             }
         }
@@ -102,11 +99,7 @@ impl MattermostClient {
 
     /// Ensure a valid token is available
     pub async fn ensure_token(&self) -> Result<()> {
-        let needs_login = self
-            .token
-            .lock()
-            .expect("token lock poisoned")
-            .is_none();
+        let needs_login = self.token.lock().expect("token lock poisoned").is_none();
         if needs_login {
             self.login().await?;
         }
@@ -141,7 +134,7 @@ impl MattermostClient {
             .context("Failed to parse Mattermost teams response")?;
 
         teams
-            .get(0)
+            .first()
             .map(|t| t.id.clone())
             .ok_or_else(|| anyhow::anyhow!("No teams found in Mattermost"))
     }
@@ -166,13 +159,17 @@ impl MattermostClient {
 
         // Try to fetch by channel name (normalize name)
         let name = conversation_id.to_lowercase();
-        let url_name = format!("{}/api/v4/channels/name/{}", self.base_url, name);
-        let resp = self.client.get(&url_name).send().await.context("Failed to query channel by name");
+        let url_name = format!("{}/api/v4/channels/name/{name}", self.base_url);
+        let resp = self
+            .client
+            .get(&url_name)
+            .send()
+            .await
+            .context("Failed to query channel by name");
         if let Ok(r) = resp {
             if r.status().is_success() {
-                let ch: ChannelResponse = r.json()
-                    .await
-                    .context("Failed to parse channel response")?;
+                let ch: ChannelResponse =
+                    r.json().await.context("Failed to parse channel response")?;
                 let cid = ch.id;
                 self.channel_cache
                     .lock()
@@ -208,9 +205,15 @@ impl MattermostClient {
             ));
         }
 
-        let ch: ChannelResponse = resp.json().await.context("Failed to parse channel create response")?;
+        let ch: ChannelResponse = resp
+            .json()
+            .await
+            .context("Failed to parse channel create response")?;
         let cid = ch.id;
-        self.channel_cache.lock().unwrap().insert(conversation_id.to_string(), cid.clone());
+        self.channel_cache
+            .lock()
+            .unwrap()
+            .insert(conversation_id.to_string(), cid.clone());
         Ok(cid)
     }
 
@@ -231,7 +234,10 @@ impl MattermostClient {
             "message": message,
         });
         if let Some(rid) = root_id {
-            payload.as_object_mut().unwrap().insert("root_id".to_string(), serde_json::Value::String(rid.to_string()));
+            payload.as_object_mut().unwrap().insert(
+                "root_id".to_string(),
+                serde_json::Value::String(rid.to_string()),
+            );
         }
 
         let resp = self

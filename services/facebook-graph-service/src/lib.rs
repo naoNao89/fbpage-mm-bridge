@@ -29,7 +29,7 @@ use crate::handlers::{
     exchange_token, get_import_status, health_check, import_all_conversations,
     import_single_conversation,
 };
-use crate::services::{CustomerServiceClient, MessageServiceClient, MattermostClient};
+use crate::services::{CustomerServiceClient, MattermostClient, MessageServiceClient};
 
 /// Application state shared across handlers
 #[derive(Clone)]
