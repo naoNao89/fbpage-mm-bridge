@@ -22,7 +22,9 @@ RUN cargo build --release --package facebook-graph-service && rm -rf src service
 COPY services/facebook-graph-service/migrations services/facebook-graph-service/migrations
 COPY services/facebook-graph-service/src services/facebook-graph-service/src
 
-RUN mkdir -p src services/facebook-graph-service/src && touch src/main.rs services/facebook-graph-service/src/main.rs && cargo build --release --package facebook-graph-service
+RUN mkdir -p src services/customer-service/src services/message-service/src services/facebook-graph-service/src && \
+    touch src/main.rs services/customer-service/src/main.rs services/message-service/src/main.rs services/facebook-graph-service/src/main.rs && \
+    cargo build --release --package facebook-graph-service
 
 FROM debian:bookworm-slim
 
