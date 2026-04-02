@@ -39,11 +39,11 @@ pub struct MattermostClient {
 
 impl MattermostClient {
     /// Create a new Mattermost client
-    pub fn new(base_url: &str, username: &str, password: &str) -> Self {
+    pub fn new(base_url: &str, username: &str, password: Option<&str>) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             username: username.to_string(),
-            password: password.to_string(),
+            password: password.unwrap_or("").to_string(),
             client: Client::new(),
             token: Arc::new(Mutex::new(None)),
             channel_cache: Arc::new(Mutex::new(HashMap::new())),

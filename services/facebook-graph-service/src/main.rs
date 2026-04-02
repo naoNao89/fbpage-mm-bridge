@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
     let mattermost_client = facebook_graph_service::services::MattermostClient::new(
         &config.mattermost_url,
         &config.mattermost_username,
-        &config.mattermost_password,
+        config.mattermost_password.as_deref(),
     );
 
     // Create application state
