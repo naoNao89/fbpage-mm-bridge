@@ -154,7 +154,7 @@ services:
 
   # Mattermost
   mattermost:
-    image: mattermost/mattermost-team-edition:10
+    image: mattermost/mattermost-team-edition:release-10
     container_name: mattermost
     restart: unless-stopped
     ports:
