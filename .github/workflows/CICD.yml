@@ -266,18 +266,18 @@ jobs:
         run: |
           docker buildx create --use || true
           docker buildx build --platform linux/amd64,linux/arm64 \
-            -t ghcr.io/naonao89/fbpage-mm-bridge/customer-service:latest \
-            -t ghcr.io/naonao89/fbpage-mm-bridge/customer-service:${{ github.sha }} \
+            -t ghcr.io/${{ github.repository_owner }}/fbpage-mm-bridge/customer-service:latest \
+            -t ghcr.io/${{ github.repository_owner }}/fbpage-mm-bridge/customer-service:${{ github.sha }} \
             ./services/customer-service --pull --push
       - name: Build and Push message-service
         run: |
           docker buildx build --platform linux/amd64,linux/arm64 \
-            -t ghcr.io/naonao89/fbpage-mm-bridge/message-service:latest \
-            -t ghcr.io/naonao89/fbpage-mm-bridge/message-service:${{ github.sha }} \
+            -t ghcr.io/${{ github.repository_owner }}/fbpage-mm-bridge/message-service:latest \
+            -t ghcr.io/${{ github.repository_owner }}/fbpage-mm-bridge/message-service:${{ github.sha }} \
             ./services/message-service --pull --push
       - name: Build and Push facebook-graph-service
         run: |
           docker buildx build --platform linux/amd64,linux/arm64 \
-            -t ghcr.io/naonao89/fbpage-mm-bridge/facebook-graph-service:latest \
-            -t ghcr.io/naonao89/fbpage-mm-bridge/facebook-graph-service:${{ github.sha }} \
+            -t ghcr.io/${{ github.repository_owner }}/fbpage-mm-bridge/facebook-graph-service:latest \
+            -t ghcr.io/${{ github.repository_owner }}/fbpage-mm-bridge/facebook-graph-service:${{ github.sha }} \
             ./services/facebook-graph-service --pull --push
