@@ -22,7 +22,7 @@ RUN cargo build --release --package customer-service && rm -rf src services/*/sr
 COPY services/customer-service/migrations services/customer-service/migrations
 COPY services/customer-service/src services/customer-service/src
 
-RUN touch services/customer-service/src/main.rs && \
+RUN touch src/main.rs services/customer-service/src/main.rs && \
     cargo build --release --package customer-service
 
 FROM debian:bookworm-slim
