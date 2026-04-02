@@ -20,7 +20,7 @@ RUN mkdir -p services/facebook-graph-service/src && echo 'fn main() {}' > servic
 RUN cargo build --release --package facebook-graph-service && rm -rf src services/*/src
 
 COPY services/facebook-graph-service/migrations services/facebook-graph-service/migrations
-COPY src services/facebook-graph-service/src
+COPY services/facebook-graph-service/src services/facebook-graph-service/src
 
 RUN mkdir -p src services/customer-service/src services/message-service/src services/facebook-graph-service/src && \
     touch src/main.rs services/customer-service/src/main.rs services/message-service/src/main.rs services/facebook-graph-service/src/main.rs && \
