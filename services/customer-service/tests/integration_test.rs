@@ -335,7 +335,10 @@ async fn test_list_customers() {
         .map(|c| c.platform_user_id.as_str())
         .collect();
     let created_ids = ["list_user_1", "list_user_2", "list_user_3"];
-    let found_count = user_ids.iter().filter(|id| created_ids.contains(id)).count();
+    let found_count = user_ids
+        .iter()
+        .filter(|id| created_ids.contains(id))
+        .count();
     assert!(
         found_count >= 3,
         "Expected to find all 3 created customers, found {}. Got user_ids: {:?}",
