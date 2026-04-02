@@ -97,7 +97,9 @@ jobs:
               echo "Pull failed, building locally..."
               docker compose build
             }
-            docker compose down || true
+            # Stop containers from any previous deployment
+            docker rm -f customer-service message-service facebook-graph-service fbpage-mm-bridge customer-service-db message-service-db facebook-graph-service-db fbpage-mm-bridge-db 2>/dev/null || true
+            docker compose down --remove-orphans 2>/dev/null || true
             docker compose up -d
 
             MM_CONTAINER_ID="$(docker compose ps -q mattermost)"
