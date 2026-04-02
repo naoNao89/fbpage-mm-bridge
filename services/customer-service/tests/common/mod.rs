@@ -3,8 +3,8 @@
 //! This module provides common utilities for setting up test databases,
 //! creating test fixtures, and managing test transactions.
 
-use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
+use sqlx::PgPool;
 use std::env;
 
 /// Create a test database connection pool
