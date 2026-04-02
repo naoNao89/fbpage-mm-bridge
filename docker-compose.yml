@@ -3,8 +3,8 @@ services:
   customer-service:
     image: ghcr.io/naonao89/fbpage-mm-bridge/customer-service:latest
     build:
-      context: ./services/customer-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/customer-service/Dockerfile
     container_name: customer-service
     restart: unless-stopped
     ports:
@@ -31,8 +31,8 @@ services:
   message-service:
     image: ghcr.io/naonao89/fbpage-mm-bridge/message-service:latest
     build:
-      context: ./services/message-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/message-service/Dockerfile
     container_name: message-service
     restart: unless-stopped
     ports:
@@ -62,8 +62,8 @@ services:
   facebook-graph-service:
     image: ghcr.io/naonao89/fbpage-mm-bridge/facebook-graph-service:latest
     build:
-      context: ./services/facebook-graph-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/facebook-graph-service/Dockerfile
     container_name: facebook-graph-service
     restart: unless-stopped
     ports:
