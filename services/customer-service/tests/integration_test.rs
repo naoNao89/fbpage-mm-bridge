@@ -342,7 +342,8 @@ async fn test_list_customers() {
     assert!(
         found_count >= 3,
         "Expected to find all 3 created customers, found {}. Got user_ids: {:?}",
-        found_count, user_ids
+        found_count,
+        user_ids
     );
 
     pool.close().await;
