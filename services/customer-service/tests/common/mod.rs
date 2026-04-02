@@ -4,6 +4,8 @@
 //! creating test fixtures, and managing test transactions.
 
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
+use std::env;
 
 /// Create a test database connection pool
 ///
