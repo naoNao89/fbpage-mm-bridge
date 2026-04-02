@@ -19,41 +19,30 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script_stop: true
-          debug: true
+          request_pty: true
           script: |
-            LOG="/tmp/deploy-$(date +%s).log"
-            bash -x -euo pipefail -c '
-            echo "=== DEPLOY STARTED ==="
-            echo "USER=${USER:-unset}"
-            echo "HOME=${HOME:-unset}"
-            echo "PWD=$(pwd)"
             export USER="${USER:-$(whoami)}"
-            echo "USER after export: $USER"
 
             export STACK_DIR="/opt/mattermost"
             export SECRETS_DIR="$STACK_DIR/secrets"
             export ADMIN_PW_FILE_HOST="$SECRETS_DIR/admin_password"
             export ADMIN_PW_FILE_IN_CONTAINER="/mattermost/config/bootstrap_admin_password"
 
-            echo "Step: mkdir"
             sudo mkdir -p "$STACK_DIR" "$SECRETS_DIR"
-            echo "Step: chown"
             sudo chown -R "$USER":"$USER" "$STACK_DIR"
 
-            echo "Step: sync repo"
             if [ ! -d "$STACK_DIR/.git" ]; then
               if [ -d "$STACK_DIR" ] && [ -n "$(ls -A "$STACK_DIR" 2>/dev/null)" ]; then
                 echo "Warning: $STACK_DIR exists but is not a git repo. Removing and re-cloning."
                 rm -rf "$STACK_DIR"
               fi
-              git clone --depth=1 https://github.com/naoNao89/fbpage-mm-bridge "$STACK_DIR"
+              git clone --depth=1 https://github.com/${{ github.repository }} "$STACK_DIR"
             else
               cd "$STACK_DIR"
               git fetch --depth=1 origin main
               git reset --hard origin/main
             fi
             cd "$STACK_DIR"
-            echo "Step: env setup done"
 
             export MM_DOMAIN="${{ secrets.MM_DOMAIN }}"
             export MM_SITE_URL="${{ secrets.MM_SITE_URL }}"
@@ -63,7 +52,6 @@ jobs:
             export MM_BOT_DISPLAY_NAME="${{ secrets.MM_BOT_DISPLAY_NAME }}"
             export MM_BOT_DESCRIPTION="${{ secrets.MM_BOT_DESCRIPTION }}"
 
-            echo "Step: password setup"
             if [ -n "${{ secrets.MM_ADMIN_PASSWORD }}" ]; then
               export MM_ADMIN_PASSWORD="${{ secrets.MM_ADMIN_PASSWORD }}"
               echo "Using MM_ADMIN_PASSWORD from GitHub Secrets."
@@ -74,40 +62,31 @@ jobs:
                 export MM_ADMIN_PASSWORD="$(cat "$ADMIN_PW_FILE_HOST")"
                 echo "Reusing existing generated admin password from $ADMIN_PW_FILE_HOST"
               else
-                export MM_ADMIN_PASSWORD="$(openssl rand -base64 36 | tr -d "\n" | tr "+/" "-_" | cut -c1-24)"
+                export MM_ADMIN_PASSWORD="$(openssl rand -base64 36 | tr -d '\n' | tr '+/' '-_' | cut -c1-24)"
                 printf "%s" "$MM_ADMIN_PASSWORD" > "$ADMIN_PW_FILE_HOST"
                 chmod 600 "$ADMIN_PW_FILE_HOST"
                 echo "Generated new admin password and stored at $ADMIN_PW_FILE_HOST"
               fi
             fi
 
-            echo "Step: env file"
             if [ ! -f .env ]; then
               cp .env.example .env || true
             fi
 
-            echo "Step: docker pull"
             docker compose pull || {
               echo "Pull failed, building locally..."
               docker compose build
             }
-            echo "Step: docker up"
             docker compose up -d
 
-            echo "Step: password copy"
             MM_CONTAINER_ID="$(docker compose ps -q mattermost)"
             if [ -n "$MM_CONTAINER_ID" ]; then
-              docker exec "$MM_CONTAINER_ID" sh -lc "printf \"%s\" \"$MM_ADMIN_PASSWORD\" > \"$ADMIN_PW_FILE_IN_CONTAINER\" && chmod 600 \"$ADMIN_PW_FILE_IN_CONTAINER\""
+              docker exec "$MM_CONTAINER_ID" sh -lc "printf '%s' \"$MM_ADMIN_PASSWORD\" > '$ADMIN_PW_FILE_IN_CONTAINER' && chmod 600 '$ADMIN_PW_FILE_IN_CONTAINER'"
               echo "Stored admin password inside container at: $ADMIN_PW_FILE_IN_CONTAINER"
             else
               echo "WARNING: Could not find Mattermost container"
             fi
 
-            echo "Step: bootstrap"
             bash ./scripts/bootstrap-mm.sh
 
-            echo "=== DEPLOY COMPLETED ==="
-            ' > "$LOG" 2>&1
-            echo "EXIT_CODE=$?"
-            cat "$LOG"
-            exit "$EXIT_CODE"
+            echo "Deploy complete"
