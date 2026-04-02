@@ -266,6 +266,7 @@ mod tests {
             #[derive(serde::Deserialize, Debug)]
             struct CustomerResponse {
                 platform_user_id: String,
+                platform: String,
                 phone: Option<String>,
             }
 
