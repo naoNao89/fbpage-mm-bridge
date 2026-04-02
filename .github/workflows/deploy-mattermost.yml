@@ -19,7 +19,7 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H -p 22 ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Deploy via SSH
+      - name: Write deploy env to server
         env:
           MM_DOMAIN: ${{ secrets.MM_DOMAIN }}
           MM_SITE_URL: ${{ secrets.MM_SITE_URL }}
@@ -32,19 +32,24 @@ jobs:
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} \
-            MM_DOMAIN="$MM_DOMAIN" \
-            MM_SITE_URL="$MM_SITE_URL" \
-            MM_ADMIN_EMAIL="$MM_ADMIN_EMAIL" \
-            MM_ADMIN_USERNAME="$MM_ADMIN_USERNAME" \
-            MM_BOT_USERNAME="$MM_BOT_USERNAME" \
-            MM_BOT_DISPLAY_NAME="$MM_BOT_DISPLAY_NAME" \
-            MM_BOT_DESCRIPTION="$MM_BOT_DESCRIPTION" \
-            MM_ADMIN_PASSWORD="$MM_ADMIN_PASSWORD" \
-            REPO="$REPO" \
-            BRANCH="$BRANCH" \
-            bash << 'EOF'
+          cat << ENVOF | ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cat > /tmp/deploy-env.sh"
+          export MM_DOMAIN='$MM_DOMAIN'
+          export MM_SITE_URL='$MM_SITE_URL'
+          export MM_ADMIN_EMAIL='$MM_ADMIN_EMAIL'
+          export MM_ADMIN_USERNAME='$MM_ADMIN_USERNAME'
+          export MM_BOT_USERNAME='$MM_BOT_USERNAME'
+          export MM_BOT_DISPLAY_NAME='$MM_BOT_DISPLAY_NAME'
+          export MM_BOT_DESCRIPTION='$MM_BOT_DESCRIPTION'
+          export MM_ADMIN_PASSWORD='$MM_ADMIN_PASSWORD'
+          export REPO='$REPO'
+          export BRANCH='$BRANCH'
+          ENVOF
+
+      - name: Deploy via SSH
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} bash << 'EOF'
             set -euo pipefail
+            source /tmp/deploy-env.sh
             export USER="${USER:-$(whoami)}"
 
             export STACK_DIR="/opt/mattermost"
@@ -68,16 +73,7 @@ jobs:
             fi
             cd "$STACK_DIR"
 
-            export MM_DOMAIN="$MM_DOMAIN"
-            export MM_SITE_URL="$MM_SITE_URL"
-            export MM_ADMIN_EMAIL="$MM_ADMIN_EMAIL"
-            export MM_ADMIN_USERNAME="$MM_ADMIN_USERNAME"
-            export MM_BOT_USERNAME="$MM_BOT_USERNAME"
-            export MM_BOT_DISPLAY_NAME="$MM_BOT_DISPLAY_NAME"
-            export MM_BOT_DESCRIPTION="$MM_BOT_DESCRIPTION"
-
             if [ -n "$MM_ADMIN_PASSWORD" ]; then
-              export MM_ADMIN_PASSWORD="$MM_ADMIN_PASSWORD"
               echo "Using MM_ADMIN_PASSWORD from GitHub Secrets."
               printf "%s" "$MM_ADMIN_PASSWORD" > "$ADMIN_PW_FILE_HOST"
               chmod 600 "$ADMIN_PW_FILE_HOST"
