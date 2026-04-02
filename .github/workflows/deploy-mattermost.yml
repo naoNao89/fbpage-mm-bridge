@@ -47,7 +47,7 @@ jobs:
 
       - name: Deploy via SSH
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} bash << 'EOF'
+          ssh -i ~/.ssh/deploy_key -o ServerAliveInterval=30 -o ServerAliveCountMax=120 ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} bash << 'EOF'
             set -euo pipefail
             source /tmp/deploy-env.sh
             export USER="${USER:-$(whoami)}"
