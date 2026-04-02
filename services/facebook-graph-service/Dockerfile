@@ -20,7 +20,7 @@ RUN mkdir -p services/facebook-graph-service/src && echo 'fn main() {}' > servic
 RUN cargo build --release --package facebook-graph-service && rm -rf src services/*/src
 
 COPY services/facebook-graph-service/migrations services/facebook-graph-service/migrations
-COPY services/facebook-graph-service/src services/facebook-graph-service/src
+COPY src services/facebook-graph-service/src
 
 RUN mkdir -p src services/customer-service/src services/message-service/src services/facebook-graph-service/src && \
     touch src/main.rs services/customer-service/src/main.rs services/message-service/src/main.rs services/facebook-graph-service/src/main.rs && \
@@ -40,7 +40,7 @@ COPY --from=builder /app/target/release/facebook-graph-service /usr/local/bin/
 
 COPY services/facebook-graph-service/migrations ./migrations
 
-COPY .env.example .env
+COPY services/facebook-graph-service/.env.example .env
 
 EXPOSE 3003
 
