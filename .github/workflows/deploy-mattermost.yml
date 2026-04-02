@@ -97,6 +97,7 @@ jobs:
               echo "Pull failed, building locally..."
               docker compose build
             }
+            docker compose down || true
             docker compose up -d
 
             MM_CONTAINER_ID="$(docker compose ps -q mattermost)"
