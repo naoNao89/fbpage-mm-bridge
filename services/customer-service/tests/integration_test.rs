@@ -330,7 +330,24 @@ async fn test_list_customers() {
         .unwrap();
     let customers: Vec<CustomerResponse> = serde_json::from_slice(&body).unwrap();
 
-    assert!(customers.len() >= 3);
+    let created_ids: std::collections::HashSet<String> =
+        ["list_user_1", "list_user_2", "list_user_3"]
+            .iter()
+            .cloned()
+            .map(String::from)
+            .collect();
+
+    let found_count = customers
+        .iter()
+        .filter(|c| created_ids.contains(&c.platform_user_id))
+        .count();
+
+    assert!(
+        found_count >= 3,
+        "Expected at least 3 of the created customers, found {}. Total: {}",
+        found_count,
+        customers.len()
+    );
 
     pool.close().await;
 }
