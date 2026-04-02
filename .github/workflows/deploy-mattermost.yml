@@ -104,7 +104,10 @@ jobs:
 
             MM_CONTAINER_ID="$(docker compose ps -q mattermost)"
             if [ -n "$MM_CONTAINER_ID" ]; then
-              docker exec "$MM_CONTAINER_ID" sh -lc "printf '%s' \"$MM_ADMIN_PASSWORD\" > '$ADMIN_PW_FILE_IN_CONTAINER' && chmod 600 '$ADMIN_PW_FILE_IN_CONTAINER'"
+              echo "$MM_ADMIN_PASSWORD" > /tmp/mm_admin_password
+              docker cp /tmp/mm_admin_password "$MM_CONTAINER_ID:$ADMIN_PW_FILE_IN_CONTAINER"
+              docker exec "$MM_CONTAINER_ID" chmod 600 "$ADMIN_PW_FILE_IN_CONTAINER" 2>/dev/null || true
+              rm -f /tmp/mm_admin_password
               echo "Stored admin password inside container at: $ADMIN_PW_FILE_IN_CONTAINER"
             else
               echo "WARNING: Could not find Mattermost container"
