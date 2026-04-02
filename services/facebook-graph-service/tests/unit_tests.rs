@@ -245,12 +245,8 @@ mod tests {
         fn test_message_service_response_parsing() {
             #[derive(serde::Deserialize, Debug)]
             struct MessageResponse {
-                id: Uuid,
-                customer_id: Uuid,
                 platform: String,
                 direction: String,
-                message_text: Option<String>,
-                created_at: chrono::DateTime<Utc>,
             }
 
             let json = serde_json::json!({
@@ -271,12 +267,9 @@ mod tests {
         fn test_customer_service_response_parsing() {
             #[derive(serde::Deserialize, Debug)]
             struct CustomerResponse {
-                id: Uuid,
                 platform_user_id: String,
                 platform: String,
-                name: Option<String>,
                 phone: Option<String>,
-                created_at: chrono::DateTime<Utc>,
             }
 
             let json = serde_json::json!({
