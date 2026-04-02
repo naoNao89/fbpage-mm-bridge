@@ -12,15 +12,39 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H -p 22 ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
       - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script_stop: true
-          script: |
-            set -x
+        env:
+          MM_DOMAIN: ${{ secrets.MM_DOMAIN }}
+          MM_SITE_URL: ${{ secrets.MM_SITE_URL }}
+          MM_ADMIN_EMAIL: ${{ secrets.MM_ADMIN_EMAIL }}
+          MM_ADMIN_USERNAME: ${{ secrets.MM_ADMIN_USERNAME }}
+          MM_BOT_USERNAME: ${{ secrets.MM_BOT_USERNAME }}
+          MM_BOT_DISPLAY_NAME: ${{ secrets.MM_BOT_DISPLAY_NAME }}
+          MM_BOT_DESCRIPTION: ${{ secrets.MM_BOT_DESCRIPTION }}
+          MM_ADMIN_PASSWORD: ${{ secrets.MM_ADMIN_PASSWORD }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} \
+            MM_DOMAIN="$MM_DOMAIN" \
+            MM_SITE_URL="$MM_SITE_URL" \
+            MM_ADMIN_EMAIL="$MM_ADMIN_EMAIL" \
+            MM_ADMIN_USERNAME="$MM_ADMIN_USERNAME" \
+            MM_BOT_USERNAME="$MM_BOT_USERNAME" \
+            MM_BOT_DISPLAY_NAME="$MM_BOT_DISPLAY_NAME" \
+            MM_BOT_DESCRIPTION="$MM_BOT_DESCRIPTION" \
+            MM_ADMIN_PASSWORD="$MM_ADMIN_PASSWORD" \
+            REPO="$REPO" \
+            BRANCH="$BRANCH" \
+            bash << 'EOF'
+            set -euo pipefail
             export USER="${USER:-$(whoami)}"
 
             export STACK_DIR="/opt/mattermost"
@@ -36,24 +60,24 @@ jobs:
                 echo "Warning: $STACK_DIR exists but is not a git repo. Removing and re-cloning."
                 rm -rf "$STACK_DIR"
               fi
-              git clone --depth=1 https://github.com/${{ github.repository }} "$STACK_DIR"
+              git clone --depth=1 https://github.com/$REPO "$STACK_DIR"
             else
               cd "$STACK_DIR"
-              git fetch --depth=1 origin ${{ github.ref_name }}
-              git reset --hard origin/${{ github.ref_name }}
+              git fetch --depth=1 origin $BRANCH
+              git reset --hard origin/$BRANCH
             fi
             cd "$STACK_DIR"
 
-            export MM_DOMAIN="${{ secrets.MM_DOMAIN }}"
-            export MM_SITE_URL="${{ secrets.MM_SITE_URL }}"
-            export MM_ADMIN_EMAIL="${{ secrets.MM_ADMIN_EMAIL }}"
-            export MM_ADMIN_USERNAME="${{ secrets.MM_ADMIN_USERNAME }}"
-            export MM_BOT_USERNAME="${{ secrets.MM_BOT_USERNAME }}"
-            export MM_BOT_DISPLAY_NAME="${{ secrets.MM_BOT_DISPLAY_NAME }}"
-            export MM_BOT_DESCRIPTION="${{ secrets.MM_BOT_DESCRIPTION }}"
+            export MM_DOMAIN="$MM_DOMAIN"
+            export MM_SITE_URL="$MM_SITE_URL"
+            export MM_ADMIN_EMAIL="$MM_ADMIN_EMAIL"
+            export MM_ADMIN_USERNAME="$MM_ADMIN_USERNAME"
+            export MM_BOT_USERNAME="$MM_BOT_USERNAME"
+            export MM_BOT_DISPLAY_NAME="$MM_BOT_DISPLAY_NAME"
+            export MM_BOT_DESCRIPTION="$MM_BOT_DESCRIPTION"
 
-            if [ -n "${{ secrets.MM_ADMIN_PASSWORD }}" ]; then
-              export MM_ADMIN_PASSWORD="${{ secrets.MM_ADMIN_PASSWORD }}"
+            if [ -n "$MM_ADMIN_PASSWORD" ]; then
+              export MM_ADMIN_PASSWORD="$MM_ADMIN_PASSWORD"
               echo "Using MM_ADMIN_PASSWORD from GitHub Secrets."
               printf "%s" "$MM_ADMIN_PASSWORD" > "$ADMIN_PW_FILE_HOST"
               chmod 600 "$ADMIN_PW_FILE_HOST"
@@ -90,3 +114,4 @@ jobs:
             bash ./scripts/bootstrap-mm.sh
 
             echo "Deploy complete"
+          EOF
