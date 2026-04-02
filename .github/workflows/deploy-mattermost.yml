@@ -23,8 +23,18 @@ jobs:
           script: |
             set -euo pipefail
 
+            LOG_FILE="/tmp/deploy-debug-$(date +%s).log"
+            exec > >(tee -a "$LOG_FILE") 2>&1
+
+            echo "=== DEPLOY STARTED ==="
+            echo "USER=${USER:-unset}"
+            echo "HOME=${HOME:-unset}"
+            echo "SHELL=${SHELL:-unset}"
+            echo "PATH=${PATH:-unset}"
+
             # Ensure USER is set (non-interactive SSH may not have it)
             export USER="${USER:-$(whoami)}"
+            echo "USER after export: $USER"
 
             export STACK_DIR="/opt/mattermost"
             export SECRETS_DIR="$STACK_DIR/secrets"
