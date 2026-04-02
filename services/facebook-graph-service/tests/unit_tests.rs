@@ -239,8 +239,6 @@ mod tests {
     // Response Parsing Tests
 
     mod response_parsing {
-        use super::*;
-
         #[test]
         fn test_message_service_response_parsing() {
             #[derive(serde::Deserialize, Debug)]
@@ -268,7 +266,6 @@ mod tests {
             #[derive(serde::Deserialize, Debug)]
             struct CustomerResponse {
                 platform_user_id: String,
-                platform: String,
                 phone: Option<String>,
             }
 
