@@ -32,6 +32,10 @@ jobs:
 
             # Sync repo into place
             if [ ! -d "$STACK_DIR/.git" ]; then
+              if [ -d "$STACK_DIR" ] && [ -n "$(ls -A "$STACK_DIR" 2>/dev/null)" ]; then
+                echo "Warning: $STACK_DIR exists but is not a git repo. Removing and re-cloning."
+                rm -rf "$STACK_DIR"
+              fi
               git clone --depth=1 https://github.com/${{ github.repository }} "$STACK_DIR"
             else
               cd "$STACK_DIR"
