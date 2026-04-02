@@ -39,8 +39,8 @@ jobs:
               git clone --depth=1 https://github.com/${{ github.repository }} "$STACK_DIR"
             else
               cd "$STACK_DIR"
-              git fetch --depth=1 origin main
-              git reset --hard origin/main
+              git fetch --depth=1 origin ${{ github.ref_name }}
+              git reset --hard origin/${{ github.ref_name }}
             fi
             cd "$STACK_DIR"
 
