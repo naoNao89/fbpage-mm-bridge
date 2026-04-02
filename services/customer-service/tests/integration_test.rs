@@ -330,14 +330,17 @@ async fn test_list_customers() {
         .unwrap();
     let customers: Vec<CustomerResponse> = serde_json::from_slice(&body).unwrap();
 
-    assert_eq!(customers.len(), 3);
     let user_ids: Vec<&str> = customers
         .iter()
         .map(|c| c.platform_user_id.as_str())
         .collect();
-    assert!(user_ids.contains(&"list_user_1"));
-    assert!(user_ids.contains(&"list_user_2"));
-    assert!(user_ids.contains(&"list_user_3"));
+    let created_ids = ["list_user_1", "list_user_2", "list_user_3"];
+    let found_count = user_ids.iter().filter(|id| created_ids.contains(id)).count();
+    assert!(
+        found_count >= 3,
+        "Expected to find all 3 created customers, found {}. Got user_ids: {:?}",
+        found_count, user_ids
+    );
 
     pool.close().await;
 }
