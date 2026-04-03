@@ -69,6 +69,12 @@ skip = [
   { name = "windows_x86_64_gnullvm", version = "0.52.6" },
   { name = "windows_x86_64_msvc", version = "0.48.5" },
   { name = "windows_x86_64_msvc", version = "0.52.6" },
+  # transitive duplicates from reqwest/native-tls/osx
+  { name = "core-foundation", version = "0.9.4" },
+  { name = "core-foundation", version = "0.10.1" },
+  # transitive duplicates from rand/sqlx/rustls
+  { name = "getrandom", version = "0.2.17" },
+  { name = "getrandom", version = "0.4.2" },
 ]
 # spell-checker: enable
 

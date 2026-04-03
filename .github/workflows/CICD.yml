@@ -11,7 +11,7 @@ permissions:
 
 env:
   CARGO_INCREMENTAL: "0"
-  RUST_MIN_SRV: "1.83.0"
+  RUST_MIN_SRV: "1.86.0"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
