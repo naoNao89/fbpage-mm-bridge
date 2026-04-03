@@ -2,6 +2,7 @@
 name = "customer-service"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "Customer Service - Manages customer identity, profiles, and platform mappings"
 authors = ["FBPage-MM-Bridge Team"]
 

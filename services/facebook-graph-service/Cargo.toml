@@ -2,6 +2,7 @@
 name = "facebook-graph-service"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "Facebook Graph Service - Fetches messages from Facebook Graph API"
 authors = ["FBPage-MM-Bridge Team"]
 

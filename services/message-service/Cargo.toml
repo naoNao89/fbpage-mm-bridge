@@ -2,6 +2,7 @@
 name = "message-service"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "Message Service - Stores and manages messages from Facebook Graph API"
 authors = ["FBPage-MM-Bridge Team"]
 
