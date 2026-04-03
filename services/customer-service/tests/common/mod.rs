@@ -1,16 +1,8 @@
-//! Test utilities for Customer Service integration tests
-//!
-//! This module provides common utilities for setting up test databases,
-//! creating test fixtures, and managing test transactions.
-
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use std::env;
+use std::sync::atomic;
 
-/// Create a test database connection pool
-///
-/// Uses TEST_DATABASE_URL environment variable if set, otherwise falls back to DATABASE_URL.
-/// The pool is configured with a maximum of 5 connections for test isolation.
 pub async fn setup_test_db() -> PgPool {
     dotenvy::dotenv().ok();
 
@@ -24,7 +16,6 @@ pub async fn setup_test_db() -> PgPool {
         .await
         .expect("Failed to connect to test database");
 
-    // Run migrations
     sqlx::migrate!("./migrations")
         .run(&pool)
         .await
@@ -33,13 +24,21 @@ pub async fn setup_test_db() -> PgPool {
     pool
 }
 
-/// Clean up test database by truncating all tables
-///
-/// This is used to ensure test isolation between tests.
-/// Tables are truncated in CASCADE mode to handle foreign key constraints.
 pub async fn cleanup_test_db(pool: &PgPool) {
     sqlx::query("TRUNCATE TABLE customers CASCADE")
         .execute(pool)
         .await
         .expect("Failed to cleanup test database");
+}
+
+static UID_COUNTER: atomic::AtomicU64 = atomic::AtomicU64::new(0);
+
+pub fn unique_platform_user_id() -> String {
+    let count = UID_COUNTER.fetch_add(1, atomic::Ordering::SeqCst);
+    let tid = std::thread::current().id();
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    format!("{:?}:{}:{}", tid, ts, count)
 }
