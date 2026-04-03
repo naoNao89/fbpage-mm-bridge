@@ -19,7 +19,7 @@ use customer_service::{
 use tower::ServiceExt; // for oneshot
 use uuid::Uuid;
 
-use common::{cleanup_test_db, setup_test_db};
+use common::{cleanup_test_db, setup_test_db, unique_platform_user_id};
 
 /// Test helper to create a test app with database
 async fn create_test_app() -> (Router, PgPool) {
@@ -162,12 +162,11 @@ async fn test_create_customer_idempotent() {
 async fn test_get_customer_by_id() {
     let (app, pool) = create_test_app().await;
 
-    // First create a customer
-    let customer = db::get_or_create_customer(&pool, "get_test_user", "facebook", Some("Get Test"))
+    let uid = unique_platform_user_id();
+    let customer = db::get_or_create_customer(&pool, &uid, "facebook", Some("Get Test"))
         .await
         .unwrap();
 
-    // Then get by ID
     let response = app
         .oneshot(
             Request::builder()
@@ -187,7 +186,7 @@ async fn test_get_customer_by_id() {
     let retrieved: CustomerResponse = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(retrieved.id, customer.id);
-    assert_eq!(retrieved.platform_user_id, "get_test_user");
+    assert_eq!(retrieved.platform_user_id, uid);
 
     pool.close().await;
 }
@@ -218,22 +217,16 @@ async fn test_get_customer_by_id_not_found() {
 async fn test_get_customer_by_platform() {
     let (app, pool) = create_test_app().await;
 
-    // Create a customer
-    let customer = db::get_or_create_customer(
-        &pool,
-        "platform_test_user",
-        "facebook",
-        Some("Platform Test"),
-    )
-    .await
-    .unwrap();
+    let uid = unique_platform_user_id();
+    let customer = db::get_or_create_customer(&pool, &uid, "facebook", Some("Platform Test"))
+        .await
+        .unwrap();
 
-    // Get by platform
     let response = app
         .oneshot(
             Request::builder()
                 .method(Method::GET)
-                .uri("/api/customers/platform/facebook/platform_test_user")
+                .uri(format!("/api/customers/platform/facebook/{}", uid))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -248,7 +241,7 @@ async fn test_get_customer_by_platform() {
     let retrieved: CustomerResponse = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(retrieved.id, customer.id);
-    assert_eq!(retrieved.platform_user_id, "platform_test_user");
+    assert_eq!(retrieved.platform_user_id, uid);
     assert_eq!(retrieved.platform, "facebook");
 
     pool.close().await;
@@ -258,11 +251,10 @@ async fn test_get_customer_by_platform() {
 async fn test_update_customer() {
     let (app, pool) = create_test_app().await;
 
-    // Create a customer
-    let customer =
-        db::get_or_create_customer(&pool, "update_test_user", "facebook", Some("Original Name"))
-            .await
-            .unwrap();
+    let uid = unique_platform_user_id();
+    let customer = db::get_or_create_customer(&pool, &uid, "facebook", Some("Original Name"))
+        .await
+        .unwrap();
 
     // Update the customer
     let update_request = UpdateCustomerRequest {
@@ -300,18 +292,40 @@ async fn test_update_customer() {
 async fn test_list_customers() {
     let (app, pool) = create_test_app().await;
 
-    // Create multiple customers
-    db::get_or_create_customer(&pool, "list_user_1", "facebook", Some("User 1"))
+    let uid1 = unique_platform_user_id();
+    let uid2 = unique_platform_user_id();
+    let uid3 = unique_platform_user_id();
+
+    db::get_or_create_customer(&pool, &uid1, "facebook", Some("User 1"))
         .await
         .unwrap();
-    db::get_or_create_customer(&pool, "list_user_2", "facebook", Some("User 2"))
+    db::get_or_create_customer(&pool, &uid2, "facebook", Some("User 2"))
         .await
         .unwrap();
-    db::get_or_create_customer(&pool, "list_user_3", "zalo", Some("User 3"))
+    db::get_or_create_customer(&pool, &uid3, "zalo", Some("User 3"))
         .await
         .unwrap();
 
-    // List all customers
+    let all_customers = db::list_customers(&pool, &Default::default())
+        .await
+        .unwrap();
+    let created_ids: std::collections::HashSet<String> = [uid1.clone(), uid2.clone(), uid3.clone()]
+        .into_iter()
+        .collect();
+    let found_count = all_customers
+        .iter()
+        .filter(|c| created_ids.contains(&c.platform_user_id))
+        .count();
+    assert!(
+        found_count >= 3,
+        "DB should have at least 3 customers, found {}. All: {:?}",
+        found_count,
+        all_customers
+            .iter()
+            .map(|c| &c.platform_user_id)
+            .collect::<Vec<_>>()
+    );
+
     let response = app
         .oneshot(
             Request::builder()
@@ -330,22 +344,14 @@ async fn test_list_customers() {
         .unwrap();
     let customers: Vec<CustomerResponse> = serde_json::from_slice(&body).unwrap();
 
-    let created_ids: std::collections::HashSet<String> =
-        ["list_user_1", "list_user_2", "list_user_3"]
-            .iter()
-            .cloned()
-            .map(String::from)
-            .collect();
-
-    let found_count = customers
+    let api_found_count = customers
         .iter()
         .filter(|c| created_ids.contains(&c.platform_user_id))
         .count();
-
     assert!(
-        found_count >= 3,
+        api_found_count >= 3,
         "Expected at least 3 of the created customers, found {}. Total: {}",
-        found_count,
+        api_found_count,
         customers.len()
     );
 
@@ -395,21 +401,22 @@ async fn test_list_customers_by_platform() {
 async fn test_customer_stats() {
     let (app, pool) = create_test_app().await;
 
-    // Create customers on different platforms
-    db::get_or_create_customer(&pool, "stats_user_1", "facebook", Some("FB User 1"))
+    let uid1 = unique_platform_user_id();
+    let uid2 = unique_platform_user_id();
+    let uid3 = unique_platform_user_id();
+
+    db::get_or_create_customer(&pool, &uid1, "facebook", Some("FB User 1"))
         .await
         .unwrap();
-    db::get_or_create_customer(&pool, "stats_user_2", "facebook", Some("FB User 2"))
+    db::get_or_create_customer(&pool, &uid2, "facebook", Some("FB User 2"))
         .await
         .unwrap();
-    db::get_or_create_customer(&pool, "stats_user_3", "zalo", Some("Zalo User"))
+    db::get_or_create_customer(&pool, &uid3, "zalo", Some("Zalo User"))
         .await
         .unwrap();
 
-    // Verify created customers exist via list endpoint (handles stale data from previous runs)
-    let created_users = ["stats_user_1", "stats_user_2", "stats_user_3"];
     let created_ids: std::collections::HashSet<String> =
-        created_users.iter().cloned().map(String::from).collect();
+        [uid1, uid2, uid3].iter().cloned().collect();
 
     let list_response = app
         .clone()
