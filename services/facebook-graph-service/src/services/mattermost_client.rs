@@ -35,6 +35,7 @@ pub struct MattermostClient {
     // internal caches to avoid repeated lookups
     channel_cache: Arc<Mutex<HashMap<String, String>>>, // conversation_id -> channel_id
     root_cache: Arc<Mutex<HashMap<String, String>>>,    // conversation_id -> root_post_id
+    webhook_cache: Arc<Mutex<HashMap<String, String>>>, // conversation_id -> webhook_id
 }
 
 impl MattermostClient {
@@ -48,6 +49,7 @@ impl MattermostClient {
             token: Arc::new(Mutex::new(None)),
             channel_cache: Arc::new(Mutex::new(HashMap::new())),
             root_cache: Arc::new(Mutex::new(HashMap::new())),
+            webhook_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
