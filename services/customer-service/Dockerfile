@@ -1,31 +1,42 @@
-FROM rust:1.88-bookworm as builder
+# Build stage 1: Planner - prepare recipe.json
+FROM lukemathwalker/cargo-chef:latest-rust-1 AS planner
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    pkg-config \
-    libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
-
+# Copy manifests first (for dependency resolution)
 COPY Cargo.toml Cargo.lock* ./
 COPY services/customer-service/Cargo.toml services/customer-service/
 COPY services/message-service/Cargo.toml services/message-service/
 COPY services/facebook-graph-service/Cargo.toml services/facebook-graph-service/
 
-RUN mkdir -p src && echo 'fn main() {}' > src/main.rs
-RUN mkdir -p services/customer-service/src && echo 'fn main() {}' > services/customer-service/src/main.rs
-RUN mkdir -p services/message-service/src && echo 'fn main() {}' > services/message-service/src/main.rs
-RUN mkdir -p services/facebook-graph-service/src && echo 'fn main() {}' > services/facebook-graph-service/src/main.rs
+# Generate recipe.json (captures dependency graph)
+RUN cargo chef prepare --recipe-path recipe.json
 
-RUN cargo build --release --package customer-service && rm -rf src services/*/src
+# Build stage 2: Builder - cook dependencies (cached layer!)
+FROM lukemathwalker/cargo-chef:latest-rust-1 AS builder
 
-COPY services/customer-service/migrations services/customer-service/migrations
+WORKDIR /app
+
+# Copy recipe from planner
+COPY --from=planner /app/recipe.json recipe.json
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Cook dependencies - this layer is cached until Cargo.lock changes!
+RUN cargo chef cook --release --package customer-service --recipe-path recipe.json
+
+# Copy source code
 COPY services/customer-service/src services/customer-service/src
+COPY services/customer-service/migrations services/customer-service/migrations
 
-RUN mkdir -p src services/customer-service/src services/message-service/src services/facebook-graph-service/src && \
-    touch src/main.rs services/customer-service/src/main.rs services/message-service/src/main.rs services/facebook-graph-service/src/main.rs && \
-    cargo build --release --package customer-service
+# Build the actual binary
+RUN cargo build --release --package customer-service
 
+# Build stage 3: Runtime
 FROM debian:bookworm-slim
 
 RUN apt-get update && \
