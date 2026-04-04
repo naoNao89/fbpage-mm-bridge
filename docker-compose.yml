@@ -96,9 +96,11 @@ services:
     networks:
       - fbpage-mm-network
 
-  # Nginx Reverse Proxy
+  # Nginx Reverse Proxy - Handles SSL termination and routes Facebook webhook
   nginx:
-    image: nginx:1.25-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx
     container_name: nginx
     restart: unless-stopped
     ports:

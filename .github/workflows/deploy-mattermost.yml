@@ -217,9 +217,6 @@ jobs:
             export GHCR_OWNER="${{ env.GHCR_OWNER }}"
             docker compose -f docker-compose.yml pull
 
-            # Stop containers from any previous deployment
-            docker rm -f customer-service message-service facebook-graph-service fbpage-mm-bridge customer-service-db message-service-db facebook-graph-service-db fbpage-mm-bridge-db 2>/dev/null || true
-            docker compose down --remove-orphans 2>/dev/null || true
             docker compose up -d
 
             echo "=== DEBUG: nginx container ==="
@@ -255,7 +252,7 @@ jobs:
 
             HEALTH_CHECK_FAILED=false
 
-            for service in customer-service message-service facebook-graph-service; do
+            for service in customer-service message-service facebook-graph-service nginx; do
               CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$service" 2>/dev/null || echo "no-healthcheck")
               if [ "$CONTAINER_STATUS" = "healthy" ]; then
                 echo "[PASS] $service: healthy"
@@ -293,6 +290,15 @@ jobs:
             else
               echo "[FAIL] mattermost: NOT running"
               docker compose logs --tail=30 mattermost
+              HEALTH_CHECK_FAILED=true
+            fi
+
+            # Check nginx
+            if docker compose ps nginx | grep -q "Up"; then
+              echo "[PASS] nginx: running"
+            else
+              echo "[FAIL] nginx: NOT running"
+              docker compose logs --tail=30 nginx
               HEALTH_CHECK_FAILED=true
             fi
 
