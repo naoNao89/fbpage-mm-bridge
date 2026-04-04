@@ -18,6 +18,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set IMAGE_TAG lowercase
+        run: echo "IMAGE_TAG_LOWER=$(echo ${{ github.sha }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -44,9 +47,9 @@ jobs:
       - name: Extract metadata for Docker images
         id: meta
         run: |
-          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:latest" >> $GITHUB_OUTPUT
-          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:latest" >> $GITHUB_OUTPUT
-          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:latest" >> $GITHUB_OUTPUT
+          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:${{ env.IMAGE_TAG_LOWER }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:latest" >> $GITHUB_OUTPUT
+          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:${{ env.IMAGE_TAG_LOWER }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:latest" >> $GITHUB_OUTPUT
+          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:${{ env.IMAGE_TAG_LOWER }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:latest" >> $GITHUB_OUTPUT
 
       - name: Build and push Customer Service
         uses: docker/build-push-action@v5
@@ -54,7 +57,7 @@ jobs:
           context: .
           file: ./services/customer-service/Dockerfile
           push: true
-          tags: ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:latest
+          tags: ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:${{ env.IMAGE_TAG_LOWER }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
@@ -65,7 +68,7 @@ jobs:
           context: .
           file: ./services/message-service/Dockerfile
           push: true
-          tags: ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:latest
+          tags: ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:${{ env.IMAGE_TAG_LOWER }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
@@ -76,7 +79,7 @@ jobs:
           context: .
           file: ./services/facebook-graph-service/Dockerfile
           push: true
-          tags: ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:latest
+          tags: ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:${{ env.IMAGE_TAG_LOWER }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
@@ -107,7 +110,7 @@ jobs:
           MM_ADMIN_PASSWORD: ${{ secrets.MM_ADMIN_PASSWORD }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG_LOWER }}
         run: |
           cat << ENVOF | ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cat > /tmp/deploy-env.sh"
           export MM_DOMAIN='$MM_DOMAIN'
