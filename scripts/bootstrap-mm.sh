@@ -17,12 +17,19 @@ MMCTL="docker exec -i $MM_CONTAINER mmctl"
 
 # Wait for Mattermost to be ready
 echo "Waiting for Mattermost to be ready..."
-for i in $(seq 1 30); do
-  if docker exec "$MM_CONTAINER" mmctl system ping --local 2>/dev/null | grep -q "OK"; then
-    echo "Mattermost is ready"
+for i in $(seq 1 60); do
+  # Check container health status first (lighter than exec)
+  HEALTH=$(docker inspect --format='{{.State.Health.Status}}' "$MM_CONTAINER" 2>/dev/null || echo "unknown")
+  if [ "$HEALTH" = "healthy" ]; then
+    echo "Mattermost is ready (attempt $i)"
     break
   fi
-  echo "   Attempt $i/30 — retrying in 5s..."
+  # Fallback: try mmctl ping directly
+  if docker exec "$MM_CONTAINER" mmctl system ping --local 2>/dev/null | grep -q "OK"; then
+    echo "Mattermost is ready (attempt $i)"
+    break
+  fi
+  echo "   Attempt $i/60 — status: $HEALTH — retrying in 5s..."
   sleep 5
 done
 
