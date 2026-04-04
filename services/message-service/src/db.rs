@@ -15,6 +15,7 @@ pub async fn create_pool(database_url: &str) -> Result<PgPool> {
 }
 
 /// Save a new message
+#[allow(clippy::too_many_arguments)]
 pub async fn save_message(
     pool: &PgPool,
     customer_id: Uuid,

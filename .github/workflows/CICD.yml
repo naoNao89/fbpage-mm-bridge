@@ -125,7 +125,7 @@ jobs:
       - name: Build with MSRV
         run: cargo build --locked
       - name: Run tests with MSRV
-        run: cargo test --locked
+        run: cargo test --locked --lib --bins
 
   doc_warnings:
     name: Documentation Warnings
@@ -199,8 +199,7 @@ jobs:
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost/${{ matrix.db_name }}
         run: |
-          cd services/${{ matrix.service }}
-          cargo test
+          cargo test -p ${{ matrix.service }}
 
   docker-integration:
     name: Docker Integration
