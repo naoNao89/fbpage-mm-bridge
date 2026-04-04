@@ -206,6 +206,7 @@ jobs:
     name: Docker Integration
     runs-on: ubuntu-latest
     needs: [fmt, clippy, build, min_version]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     env:
       FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
       FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
@@ -218,8 +219,49 @@ jobs:
           persist-credentials: false
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build all services
-        run: docker compose -f docker-compose.test.yml build
+      - name: Build customer-service
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/customer-service/Dockerfile
+          push: false
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: fbpage-mm-bridge/customer-service:test
+
+      - name: Build message-service
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/message-service/Dockerfile
+          push: false
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: fbpage-mm-bridge/message-service:test
+
+      - name: Build facebook-graph-service
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/facebook-graph-service/Dockerfile
+          push: false
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: fbpage-mm-bridge/facebook-graph-service:test
+
+      - name: Build test-runner
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.test
+          push: false
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: fbpage-mm-bridge/test-runner:test
 
       - name: Start all services
         run: docker compose -f docker-compose.test.yml up -d
