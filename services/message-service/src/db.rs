@@ -1,5 +1,6 @@
 use crate::models::{Message, MessageStats};
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use uuid::Uuid;
 
@@ -22,6 +23,7 @@ pub async fn save_message(
     direction: &str,
     message_text: Option<&str>,
     external_id: Option<&str>,
+    created_at: Option<DateTime<Utc>>,
 ) -> Result<Message> {
     let id = Uuid::new_v4();
     let message = sqlx::query_as::<_, Message>(
@@ -30,7 +32,7 @@ pub async fn save_message(
             id, customer_id, conversation_id, platform, direction, 
             message_text, external_id, created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()))
         RETURNING *
         "#,
     )
@@ -41,6 +43,7 @@ pub async fn save_message(
     .bind(direction)
     .bind(message_text)
     .bind(external_id)
+    .bind(created_at)
     .fetch_one(pool)
     .await?;
 

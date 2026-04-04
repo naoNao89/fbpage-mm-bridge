@@ -22,6 +22,7 @@ mod tests {
             direction: "incoming".to_string(),
             message_text: Some(message_text.to_string()),
             external_id: Some(external_id.to_string()),
+            created_at: None,
         }
     }
 
@@ -98,6 +99,7 @@ mod tests {
                 direction: direction.to_string(),
                 message_text: Some("test".to_string()),
                 external_id: None,
+                created_at: None,
             };
             assert!(serde_json::to_string(&request).is_ok());
             assert_eq!(request.direction, direction);
@@ -122,6 +124,7 @@ mod tests {
                 direction: "incoming".to_string(),
                 message_text: Some(msg_text.to_string()),
                 external_id: Some(format!("msg_{}", Uuid::new_v4())),
+                created_at: None,
             };
 
             // Verify serialization/deserialization works for any content
@@ -144,6 +147,7 @@ mod tests {
                 direction: "incoming".to_string(),
                 message_text: Some("test".to_string()),
                 external_id: Some(format!("ext_{}", Uuid::new_v4())),
+                created_at: None,
             };
 
             assert_eq!(request.platform, platform);

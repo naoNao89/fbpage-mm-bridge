@@ -70,6 +70,7 @@ pub async fn create_message(
         &payload.direction,
         payload.message_text.as_deref(),
         payload.external_id.as_deref(),
+        payload.created_at,
     )
     .await
     {
