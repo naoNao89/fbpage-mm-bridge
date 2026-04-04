@@ -5,9 +5,13 @@ on:
     branches: [ "main", "dev/**" ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 env:
-  GHCR_OWNER: ${{ github.repository_owner }}
   IMAGE_TAG: ${{ github.sha }}
+  GHCR_OWNER: ${{ github.repository_owner }}
 
 jobs:
   build:
@@ -17,6 +21,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set lowercase owner
+        run: |
+          echo "GHCR_OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -44,9 +52,9 @@ jobs:
       - name: Extract metadata for Docker images
         id: meta
         run: |
-          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:${IMAGE_TAG},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:latest" >> $GITHUB_OUTPUT
-          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:${IMAGE_TAG},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:latest" >> $GITHUB_OUTPUT
-          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:${IMAGE_TAG},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:latest" >> $GITHUB_OUTPUT
+          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:latest" >> $GITHUB_OUTPUT
+          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:latest" >> $GITHUB_OUTPUT
+          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:latest" >> $GITHUB_OUTPUT
 
       - name: Build and push Customer Service
         uses: docker/build-push-action@v5
@@ -54,7 +62,7 @@ jobs:
           context: .
           file: ./services/customer-service/Dockerfile
           push: true
-          tags: ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:${IMAGE_TAG},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:latest
+          tags: ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
@@ -65,7 +73,7 @@ jobs:
           context: .
           file: ./services/message-service/Dockerfile
           push: true
-          tags: ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:${IMAGE_TAG},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:latest
+          tags: ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
@@ -76,7 +84,7 @@ jobs:
           context: .
           file: ./services/facebook-graph-service/Dockerfile
           push: true
-          tags: ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:${IMAGE_TAG},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:latest
+          tags: ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
@@ -87,6 +95,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set lowercase owner
+        run: |
+          echo "GHCR_OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
       - name: Setup SSH
         run: |
@@ -189,5 +201,72 @@ jobs:
 
             bash ./scripts/bootstrap-mm.sh
 
+            # Post-deploy health checks
+            echo ""
+            echo "=== Post-Deploy Health Check ==="
+            echo ""
+
+            # Wait for containers to start and initialize
+            sleep 15
+
+            # Check all containers are running
+            echo "Container status:"
+            docker compose ps
+
+            # Verify each service via Docker healthcheck
+            echo ""
+            echo "Service health checks:"
+
+            HEALTH_CHECK_FAILED=false
+
+            for service in customer-service message-service facebook-graph-service; do
+              CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$service" 2>/dev/null || echo "no-healthcheck")
+              if [ "$CONTAINER_STATUS" = "healthy" ]; then
+                echo "[PASS] $service: healthy"
+              elif [ "$CONTAINER_STATUS" = "starting" ]; then
+                echo "[WAIT] $service: still starting (waiting...)"
+                sleep 10
+                CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$service" 2>/dev/null || echo "no-healthcheck")
+                if [ "$CONTAINER_STATUS" = "healthy" ]; then
+                  echo "[PASS] $service: healthy"
+                else
+                  echo "[FAIL] $service: unhealthy (status: $CONTAINER_STATUS)"
+                  docker compose logs --tail=30 "$service"
+                  HEALTH_CHECK_FAILED=true
+                fi
+              elif [ "$CONTAINER_STATUS" = "unhealthy" ]; then
+                echo "[FAIL] $service: UNHEALTHY"
+                docker compose logs --tail=30 "$service"
+                HEALTH_CHECK_FAILED=true
+              else
+                # Fallback: check if process is running
+                if docker compose ps "$service" | grep -q "Up"; then
+                  echo "[PASS] $service: running (no healthcheck available)"
+                else
+                  echo "[FAIL] $service: NOT running"
+                  docker compose logs --tail=30 "$service"
+                  HEALTH_CHECK_FAILED=true
+                fi
+              fi
+            done
+
+            # Check Mattermost
+            MM_CONTAINER_ID="$(docker compose ps -q mattermost)"
+            if [ -n "$MM_CONTAINER_ID" ]; then
+              echo "[PASS] mattermost: running"
+            else
+              echo "[FAIL] mattermost: NOT running"
+              docker compose logs --tail=30 mattermost
+              HEALTH_CHECK_FAILED=true
+            fi
+
+            if [ "$HEALTH_CHECK_FAILED" = true ]; then
+              echo ""
+              echo "=== Health check FAILED ==="
+              exit 1
+            fi
+
+            echo ""
+            echo "=== All services healthy ==="
             echo "Deploy complete"
           EOF
