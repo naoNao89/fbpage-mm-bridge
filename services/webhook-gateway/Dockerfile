@@ -1,3 +1,4 @@
+# Build stage 1: Planner - prepare recipe.json
 FROM lukemathwalker/cargo-chef:latest-rust-1 AS planner
 
 WORKDIR /app
@@ -8,7 +9,6 @@ COPY services/message-service/Cargo.toml services/message-service/
 COPY services/facebook-graph-service/Cargo.toml services/facebook-graph-service/
 COPY services/webhook-gateway/Cargo.toml services/webhook-gateway/
 
-# Copy minimal source stubs for cargo chef prepare
 COPY services/customer-service/src services/customer-service/src
 COPY services/message-service/src services/message-service/src
 COPY services/facebook-graph-service/src services/facebook-graph-service/src
@@ -16,6 +16,7 @@ COPY services/webhook-gateway/src services/webhook-gateway/src
 
 RUN cargo chef prepare --recipe-path recipe.json
 
+# Build stage 2: Builder - cook dependencies (cached layer!)
 FROM lukemathwalker/cargo-chef:latest-rust-1 AS builder
 
 WORKDIR /app
@@ -27,29 +28,31 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN cargo chef cook --release --package facebook-graph-service --recipe-path recipe.json
+RUN cargo chef cook --release --package webhook-gateway --recipe-path recipe.json
 
-COPY services/facebook-graph-service/src services/facebook-graph-service/src
-COPY services/facebook-graph-service/migrations services/facebook-graph-service/migrations
+COPY services/webhook-gateway/src services/webhook-gateway/src
 
-RUN cargo build --release --package facebook-graph-service
+RUN cargo build --release --package webhook-gateway
 
+# Build stage 3: Runtime
 FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y ca-certificates libssl3 curl && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    libssl3 \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/webhook-gateway /app/webhook-gateway
 
-COPY --from=builder /app/target/release/facebook-graph-service /usr/local/bin/
+RUN useradd -r -s /bin/false appuser && \
+    chown -R appuser:appuser /app
 
-COPY services/facebook-graph-service/migrations ./migrations
+USER appuser
 
-COPY services/facebook-graph-service/.env.example .env
+EXPOSE 3004
 
-EXPOSE 3003
+ENV BIND_ADDRESS=0.0.0.0:3004
+ENV LOG_LEVEL=info
 
-CMD ["facebook-graph-service"]
+CMD ["./webhook-gateway"]

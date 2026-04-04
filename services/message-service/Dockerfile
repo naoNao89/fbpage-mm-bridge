@@ -6,10 +6,13 @@ COPY Cargo.toml Cargo.lock* ./
 COPY services/customer-service/Cargo.toml services/customer-service/
 COPY services/message-service/Cargo.toml services/message-service/
 COPY services/facebook-graph-service/Cargo.toml services/facebook-graph-service/
+COPY services/webhook-gateway/Cargo.toml services/webhook-gateway/
 
+# Copy minimal source stubs for cargo chef prepare
 COPY services/customer-service/src services/customer-service/src
 COPY services/message-service/src services/message-service/src
 COPY services/facebook-graph-service/src services/facebook-graph-service/src
+COPY services/webhook-gateway/src services/webhook-gateway/src
 
 RUN cargo chef prepare --recipe-path recipe.json
 
