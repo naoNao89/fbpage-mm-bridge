@@ -28,6 +28,7 @@ pub struct CreateMessageRequest {
     pub direction: String,
     pub message_text: Option<String>,
     pub external_id: Option<String>,
+    pub created_at: Option<DateTime<Utc>>,
 }
 
 /// Request payload for marking message as synced

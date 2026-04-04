@@ -413,6 +413,7 @@ async fn process_conversation(
                                 &channel_id,
                                 msg.message.as_deref().unwrap_or(""),
                                 root_id_slice,
+                                Some(msg.created_time.timestamp_millis()),
                             )
                             .await
                         {

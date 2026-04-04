@@ -223,6 +223,7 @@ impl MattermostClient {
         channel_id: &str,
         message: &str,
         root_id: Option<&str>,
+        create_at: Option<i64>,
     ) -> Result<String> {
         self.ensure_token()
             .await
@@ -237,6 +238,12 @@ impl MattermostClient {
             payload.as_object_mut().unwrap().insert(
                 "root_id".to_string(),
                 serde_json::Value::String(rid.to_string()),
+            );
+        }
+        if let Some(ts) = create_at {
+            payload.as_object_mut().unwrap().insert(
+                "create_at".to_string(),
+                serde_json::Value::Number(ts.into()),
             );
         }
 
