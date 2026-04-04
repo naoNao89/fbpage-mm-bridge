@@ -119,6 +119,7 @@ jobs:
           MM_ADMIN_PASSWORD: ${{ secrets.MM_ADMIN_PASSWORD }}
           WEBHOOK_DOMAIN: ${{ secrets.WEBHOOK_DOMAIN }}
           FACEBOOK_WEBHOOK_VERIFY_TOKEN: ${{ secrets.FACEBOOK_WEBHOOK_VERIFY_TOKEN }}
+          SSL_EMAIL: ${{ secrets.SSL_EMAIL }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
@@ -134,6 +135,7 @@ jobs:
           export MM_ADMIN_PASSWORD='$MM_ADMIN_PASSWORD'
           export WEBHOOK_DOMAIN='$WEBHOOK_DOMAIN'
           export FACEBOOK_WEBHOOK_VERIFY_TOKEN='$FACEBOOK_WEBHOOK_VERIFY_TOKEN'
+          export SSL_EMAIL='$SSL_EMAIL'
           export REPO='$REPO'
           export BRANCH='$BRANCH'
           export IMAGE_TAG='$IMAGE_TAG'
@@ -197,7 +199,7 @@ jobs:
               docker rm -f nginx 2>/dev/null || true
               docker compose up -d certbot
               sleep 5
-              docker compose exec -T certbot certbot certonly --standalone -d "$WEBHOOK_DOMAIN" --noninteractive --agree-tos --email "$MM_ADMIN_EMAIL" -m "$MM_ADMIN_EMAIL" --keep-until-expiring || true
+              docker compose exec -T certbot certbot certonly --standalone -d "$WEBHOOK_DOMAIN" --noninteractive --agree-tos --email "$SSL_EMAIL" -m "$SSL_EMAIL" --keep-until-expiring || true
               docker compose down certbot 2>/dev/null || true
             fi
 
