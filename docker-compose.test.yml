@@ -69,9 +69,7 @@ services:
 
   # Customer Service - Manages customer data
   customer-service:
-    build:
-      context: .
-      dockerfile: services/customer-service/Dockerfile
+    image: ghcr.io/${GITHUB_REPOSITORY}/customer-service:${CI_TEST_TAG}
     container_name: fbpage-mm-test-customer-service
     restart: "no"
     ports:
@@ -97,9 +95,7 @@ services:
 
   # Message Service - Stores messages from Facebook
   message-service:
-    build:
-      context: .
-      dockerfile: services/message-service/Dockerfile
+    image: ghcr.io/${GITHUB_REPOSITORY}/message-service:${CI_TEST_TAG}
     container_name: fbpage-mm-test-message-service
     restart: "no"
     ports:
@@ -128,9 +124,7 @@ services:
 
   # Facebook Graph Service - Fetches messages from Facebook API
   facebook-graph-service:
-    build:
-      context: .
-      dockerfile: services/facebook-graph-service/Dockerfile
+    image: ghcr.io/${GITHUB_REPOSITORY}/facebook-graph-service:${CI_TEST_TAG}
     container_name: fbpage-mm-test-facebook-graph-service
     restart: "no"
     ports:
@@ -169,9 +163,7 @@ services:
   # ============================================================================
 
   test-runner:
-    build:
-      context: .
-      dockerfile: Dockerfile.test
+    image: ghcr.io/${GITHUB_REPOSITORY}/test-runner:${CI_TEST_TAG}
     container_name: fbpage-mm-test-runner
     restart: "no"
     environment:
@@ -179,6 +171,8 @@ services:
       - CUSTOMER_DATABASE_URL=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@customer-db:5432/${CUSTOMER_SERVICE_DB:-customer_service}
       - MESSAGE_DATABASE_URL=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@message-db:5432/${MESSAGE_SERVICE_DB:-message_service}
       - FACEBOOK_DATABASE_URL=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@facebook-db:5432/${FACEBOOK_GRAPH_DB:-facebook_graph}
+      # DATABASE_URL for cargo test (customer-service integration tests)
+      - DATABASE_URL=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@customer-db:5432/${CUSTOMER_SERVICE_DB:-customer_service}
       # Service URLs for HTTP testing
       - CUSTOMER_SERVICE_URL=http://customer-service:3001
       - MESSAGE_SERVICE_URL=http://message-service:3002
