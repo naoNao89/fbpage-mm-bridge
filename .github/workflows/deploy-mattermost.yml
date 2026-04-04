@@ -117,6 +117,8 @@ jobs:
           MM_BOT_DISPLAY_NAME: ${{ secrets.MM_BOT_DISPLAY_NAME }}
           MM_BOT_DESCRIPTION: ${{ secrets.MM_BOT_DESCRIPTION }}
           MM_ADMIN_PASSWORD: ${{ secrets.MM_ADMIN_PASSWORD }}
+          WEBHOOK_DOMAIN: ${{ secrets.WEBHOOK_DOMAIN }}
+          FACEBOOK_WEBHOOK_VERIFY_TOKEN: ${{ secrets.FACEBOOK_WEBHOOK_VERIFY_TOKEN }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
@@ -130,6 +132,8 @@ jobs:
           export MM_BOT_DISPLAY_NAME='$MM_BOT_DISPLAY_NAME'
           export MM_BOT_DESCRIPTION='$MM_BOT_DESCRIPTION'
           export MM_ADMIN_PASSWORD='$MM_ADMIN_PASSWORD'
+          export WEBHOOK_DOMAIN='$WEBHOOK_DOMAIN'
+          export FACEBOOK_WEBHOOK_VERIFY_TOKEN='$FACEBOOK_WEBHOOK_VERIFY_TOKEN'
           export REPO='$REPO'
           export BRANCH='$BRANCH'
           export IMAGE_TAG='$IMAGE_TAG'
@@ -183,13 +187,24 @@ jobs:
               cp .env.example .env || true
             fi
 
+            # Stop containers from any previous deployment
+            docker rm -f customer-service message-service facebook-graph-service fbpage-mm-bridge customer-service-db message-service-db facebook-graph-service-db fbpage-mm-bridge-db nginx certbot 2>/dev/null || true
+            docker compose down --remove-orphans 2>/dev/null || true
+
+            # Initialize SSL certificates with Let's Encrypt (if not already present)
+            if [ ! -d "/opt/mattermost/certbot/conf/live/$WEBHOOK_DOMAIN" ]; then
+              echo "=== Initializing SSL certificates for $WEBHOOK_DOMAIN ==="
+              docker rm -f nginx 2>/dev/null || true
+              docker compose up -d certbot
+              sleep 5
+              docker compose exec -T certbot certbot certonly --standalone -d "$WEBHOOK_DOMAIN" --noninteractive --agree-tos --email "$MM_ADMIN_EMAIL" -m "$MM_ADMIN_EMAIL" --keep-until-expiring || true
+              docker compose down certbot 2>/dev/null || true
+            fi
+
             # Pull pre-built images from GHCR instead of building locally
             export GHCR_OWNER="${{ env.GHCR_OWNER }}"
             docker compose -f docker-compose.yml pull
 
-            # Stop containers from any previous deployment
-            docker rm -f customer-service message-service facebook-graph-service fbpage-mm-bridge customer-service-db message-service-db facebook-graph-service-db fbpage-mm-bridge-db 2>/dev/null || true
-            docker compose down --remove-orphans 2>/dev/null || true
             docker compose up -d
 
             MM_CONTAINER_ID="$(docker compose ps -q mattermost)"
@@ -219,7 +234,7 @@ jobs:
 
             HEALTH_CHECK_FAILED=false
 
-            for service in customer-service message-service facebook-graph-service; do
+            for service in customer-service message-service facebook-graph-service nginx; do
               CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$service" 2>/dev/null || echo "no-healthcheck")
               if [ "$CONTAINER_STATUS" = "healthy" ]; then
                 echo "[PASS] $service: healthy"
@@ -257,6 +272,15 @@ jobs:
             else
               echo "[FAIL] mattermost: NOT running"
               docker compose logs --tail=30 mattermost
+              HEALTH_CHECK_FAILED=true
+            fi
+
+            # Check nginx
+            if docker compose ps nginx | grep -q "Up"; then
+              echo "[PASS] nginx: running"
+            else
+              echo "[FAIL] nginx: NOT running"
+              docker compose logs --tail=30 nginx
               HEALTH_CHECK_FAILED=true
             fi
 

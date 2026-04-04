@@ -77,6 +77,7 @@ services:
       - FACEBOOK_PAGE_ACCESS_TOKEN=${FACEBOOK_PAGE_ACCESS_TOKEN}
       - FACEBOOK_APP_ID=${FACEBOOK_APP_ID}
       - FACEBOOK_APP_SECRET=${FACEBOOK_APP_SECRET}
+      - FACEBOOK_WEBHOOK_VERIFY_TOKEN=${FACEBOOK_WEBHOOK_VERIFY_TOKEN}
       - CUSTOMER_SERVICE_URL=http://customer-service:3001
       - MESSAGE_SERVICE_URL=http://message-service:3002
     depends_on:
@@ -94,6 +95,38 @@ services:
       start_period: 30s
     networks:
       - fbpage-mm-network
+
+  # Nginx Reverse Proxy - Handles SSL termination and routes Facebook webhook
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - certbot_www:/var/www/certbot:ro
+      - certbot_cert:/etc/letsencrypt:ro
+    depends_on:
+      facebook-graph-service:
+        condition: service_healthy
+    networks:
+      - fbpage-mm-network
+
+  # Certbot for SSL certificates
+  certbot:
+    image: certbot/certbot:latest
+    container_name: certbot
+    restart: unless-stopped
+    volumes:
+      - certbot_www:/var/www/certbot
+      - certbot_cert:/etc/letsencrypt
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do sleep 6h; certbot renew; done'"
+    environment:
+      - DOMAIN=${WEBHOOK_DOMAIN}
+      - EMAIL=${SSL_EMAIL:-admin@example.com}
 
   # PostgreSQL for Customer Service
   customer-db:
@@ -217,6 +250,8 @@ volumes:
   mattermost_client_plugins:
   mattermost_bleve_indexes:
   mattermost_db_data:
+  certbot_www:
+  certbot_cert:
 
 networks:
   fbpage-mm-network:
