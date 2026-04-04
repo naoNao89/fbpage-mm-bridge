@@ -10,8 +10,8 @@ permissions:
   packages: write
 
 env:
-  GHCR_OWNER: ${{ github.repository_owner }}
   IMAGE_TAG: ${{ github.sha }}
+  GHCR_OWNER: ${{ github.repository_owner }}
 
 jobs:
   build:
@@ -21,6 +21,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set lowercase owner
+        run: |
+          echo "GHCR_OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -45,17 +49,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Set lowercase owner
-        id: owner
-        run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
-
       - name: Extract metadata for Docker images
         id: meta
         run: |
-          echo "tags=ghcr.io/${{ steps.owner.outputs.owner }}/fbpage-mm-bridge/customer-service:${{ env.IMAGE_TAG }},ghcr.io/${{ steps.owner.outputs.owner }}/fbpage-mm-bridge/customer-service:latest" >> $GITHUB_OUTPUT
-          echo "tags=ghcr.io/${{ steps.owner.outputs.owner }}/fbpage-mm-bridge/message-service:${{ env.IMAGE_TAG }},ghcr.io/${{ steps.owner.outputs.owner }}/fbpage-mm-bridge/message-service:latest" >> $GITHUB_OUTPUT
-          echo "tags=ghcr.io/${{ steps.owner.outputs.owner }}/fbpage-mm-bridge/facebook-graph-service:${{ env.IMAGE_TAG }},ghcr.io/${{ steps.owner.outputs.owner }}/fbpage-mm-bridge/facebook-graph-service:latest" >> $GITHUB_OUTPUT
-          echo "tags=ghcr.io/${{ steps.owner.outputs.owner }}/fbpage-mm-bridge/webhook-gateway:${{ env.IMAGE_TAG }},ghcr.io/${{ steps.owner.outputs.owner }}/fbpage-mm-bridge/webhook-gateway:latest" >> $GITHUB_OUTPUT
+          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:latest" >> $GITHUB_OUTPUT
+          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:latest" >> $GITHUB_OUTPUT
+          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:latest" >> $GITHUB_OUTPUT
 
       - name: Build and push Customer Service
         uses: docker/build-push-action@v5
@@ -63,7 +62,7 @@ jobs:
           context: .
           file: ./services/customer-service/Dockerfile
           push: true
-          tags: ghcr.io/${{ steps.owner.outputs.owner }}/fbpage-mm-bridge/customer-service:${{ env.IMAGE_TAG }},ghcr.io/${{ steps.owner.outputs.owner }}/fbpage-mm-bridge/customer-service:latest
+          tags: ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
@@ -74,7 +73,7 @@ jobs:
           context: .
           file: ./services/message-service/Dockerfile
           push: true
-          tags: ghcr.io/${{ steps.owner.outputs.owner }}/fbpage-mm-bridge/message-service:${{ env.IMAGE_TAG }},ghcr.io/${{ steps.owner.outputs.owner }}/fbpage-mm-bridge/message-service:latest
+          tags: ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
@@ -85,18 +84,7 @@ jobs:
           context: .
           file: ./services/facebook-graph-service/Dockerfile
           push: true
-          tags: ghcr.io/${{ steps.owner.outputs.owner }}/fbpage-mm-bridge/facebook-graph-service:${{ env.IMAGE_TAG }},ghcr.io/${{ steps.owner.outputs.owner }}/fbpage-mm-bridge/facebook-graph-service:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64
-
-      - name: Build and push Webhook Gateway
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./services/webhook-gateway/Dockerfile
-          push: true
-          tags: ghcr.io/${{ steps.owner.outputs.owner }}/fbpage-mm-bridge/webhook-gateway:${{ env.IMAGE_TAG }},ghcr.io/${{ steps.owner.outputs.owner }}/fbpage-mm-bridge/webhook-gateway:latest
+          tags: ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
@@ -107,6 +95,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set lowercase owner
+        run: |
+          echo "GHCR_OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
       - name: Setup SSH
         run: |
@@ -125,9 +117,6 @@ jobs:
           MM_BOT_DISPLAY_NAME: ${{ secrets.MM_BOT_DISPLAY_NAME }}
           MM_BOT_DESCRIPTION: ${{ secrets.MM_BOT_DESCRIPTION }}
           MM_ADMIN_PASSWORD: ${{ secrets.MM_ADMIN_PASSWORD }}
-          FACEBOOK_WEBHOOK_VERIFY_TOKEN: ${{ secrets.FACEBOOK_WEBHOOK_VERIFY_TOKEN }}
-          MATTERMOST_WEBHOOK_URL: ${{ secrets.MATTERMOST_WEBHOOK_URL }}
-          WEBHOOK_DOMAIN: ${{ secrets.WEBHOOK_DOMAIN }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
@@ -141,9 +130,6 @@ jobs:
           export MM_BOT_DISPLAY_NAME='$MM_BOT_DISPLAY_NAME'
           export MM_BOT_DESCRIPTION='$MM_BOT_DESCRIPTION'
           export MM_ADMIN_PASSWORD='$MM_ADMIN_PASSWORD'
-          export FACEBOOK_WEBHOOK_VERIFY_TOKEN='$FACEBOOK_WEBHOOK_VERIFY_TOKEN'
-          export MATTERMOST_WEBHOOK_URL='$MATTERMOST_WEBHOOK_URL'
-          export WEBHOOK_DOMAIN='$WEBHOOK_DOMAIN'
           export REPO='$REPO'
           export BRANCH='$BRANCH'
           export IMAGE_TAG='$IMAGE_TAG'
@@ -197,33 +183,14 @@ jobs:
               cp .env.example .env || true
             fi
 
-            export GHCR_OWNER=$(echo '${{ env.GHCR_OWNER }}' | tr '[:upper:]' '[:lower:]')
+            # Pull pre-built images from GHCR instead of building locally
+            export GHCR_OWNER="${{ env.GHCR_OWNER }}"
             docker compose -f docker-compose.yml pull
 
-            docker rm -f customer-service message-service facebook-graph-service webhook-gateway fbpage-mm-bridge customer-service-db message-service-db facebook-graph-service-db fbpage-mm-bridge-db 2>/dev/null || true
+            # Stop containers from any previous deployment
+            docker rm -f customer-service message-service facebook-graph-service fbpage-mm-bridge customer-service-db message-service-db facebook-graph-service-db fbpage-mm-bridge-db 2>/dev/null || true
             docker compose down --remove-orphans 2>/dev/null || true
-            sudo fuser -k 3004/tcp 2>/dev/null || true
             docker compose up -d
-
-            if [ -n "$WEBHOOK_DOMAIN" ] && [ ! -d "/etc/letsencrypt/live/$WEBHOOK_DOMAIN" ]; then
-              echo "Setting up SSL certificate for $WEBHOOK_DOMAIN..."
-              sudo bash ./scripts/setup-nginx-ssl.sh "$WEBHOOK_DOMAIN"
-              echo "SSL certificate setup complete"
-            fi
-
-            if [ -n "$WEBHOOK_DOMAIN" ] && [ -f nginx/webhook.conf.tpl ]; then
-              echo "Deploying nginx webhook config for $WEBHOOK_DOMAIN..."
-              sudo mkdir -p /etc/nginx/conf.d
-              rm -f /etc/nginx/conf.d/acme-challenge.conf
-              sed "s/\${WEBHOOK_DOMAIN}/$WEBHOOK_DOMAIN/g" nginx/webhook.conf.tpl | sudo tee /etc/nginx/conf.d/webhook.conf > /dev/null
-              if sudo nginx -t 2>&1; then
-                sudo systemctl is-active nginx >/dev/null 2>&1 && sudo systemctl reload nginx 2>&1 || sudo systemctl start nginx 2>&1 || true
-                echo "Nginx reloaded/started"
-              else
-                echo "Nginx config test failed"
-              fi
-              sudo ufw allow 443/tcp 2>/dev/null || true
-            fi
 
             MM_CONTAINER_ID="$(docker compose ps -q mattermost)"
             if [ -n "$MM_CONTAINER_ID" ]; then
@@ -234,5 +201,72 @@ jobs:
 
             bash ./scripts/bootstrap-mm.sh
 
+            # Post-deploy health checks
+            echo ""
+            echo "=== Post-Deploy Health Check ==="
+            echo ""
+
+            # Wait for containers to start and initialize
+            sleep 15
+
+            # Check all containers are running
+            echo "Container status:"
+            docker compose ps
+
+            # Verify each service via Docker healthcheck
+            echo ""
+            echo "Service health checks:"
+
+            HEALTH_CHECK_FAILED=false
+
+            for service in customer-service message-service facebook-graph-service; do
+              CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$service" 2>/dev/null || echo "no-healthcheck")
+              if [ "$CONTAINER_STATUS" = "healthy" ]; then
+                echo "[PASS] $service: healthy"
+              elif [ "$CONTAINER_STATUS" = "starting" ]; then
+                echo "[WAIT] $service: still starting (waiting...)"
+                sleep 10
+                CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$service" 2>/dev/null || echo "no-healthcheck")
+                if [ "$CONTAINER_STATUS" = "healthy" ]; then
+                  echo "[PASS] $service: healthy"
+                else
+                  echo "[FAIL] $service: unhealthy (status: $CONTAINER_STATUS)"
+                  docker compose logs --tail=30 "$service"
+                  HEALTH_CHECK_FAILED=true
+                fi
+              elif [ "$CONTAINER_STATUS" = "unhealthy" ]; then
+                echo "[FAIL] $service: UNHEALTHY"
+                docker compose logs --tail=30 "$service"
+                HEALTH_CHECK_FAILED=true
+              else
+                # Fallback: check if process is running
+                if docker compose ps "$service" | grep -q "Up"; then
+                  echo "[PASS] $service: running (no healthcheck available)"
+                else
+                  echo "[FAIL] $service: NOT running"
+                  docker compose logs --tail=30 "$service"
+                  HEALTH_CHECK_FAILED=true
+                fi
+              fi
+            done
+
+            # Check Mattermost
+            MM_CONTAINER_ID="$(docker compose ps -q mattermost)"
+            if [ -n "$MM_CONTAINER_ID" ]; then
+              echo "[PASS] mattermost: running"
+            else
+              echo "[FAIL] mattermost: NOT running"
+              docker compose logs --tail=30 mattermost
+              HEALTH_CHECK_FAILED=true
+            fi
+
+            if [ "$HEALTH_CHECK_FAILED" = true ]; then
+              echo ""
+              echo "=== Health check FAILED ==="
+              exit 1
+            fi
+
+            echo ""
+            echo "=== All services healthy ==="
             echo "Deploy complete"
           EOF
