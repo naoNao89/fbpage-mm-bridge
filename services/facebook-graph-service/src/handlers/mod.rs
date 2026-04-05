@@ -52,31 +52,39 @@ pub async fn webhook_handler(
     State(state): State<AppState>,
     body: String,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    info!("Received webhook event");
+    info!("Received webhook event: {}", &body);
 
-    if let Some(payload) = parse_webhook_entry(&body) {
-        for entry in payload.entry {
-            for message in entry.messaging {
-                let sender_id = match &message.sender.id {
-                    Some(id) => id,
-                    None => continue,
-                };
-                let recipient_id = match &message.recipient.id {
-                    Some(id) => id,
-                    None => continue,
-                };
-                let msg = match &message.message {
-                    Some(m) => m,
-                    None => continue,
-                };
+    let payload = match parse_webhook_entry(&body) {
+        Some(p) => { debug!("Parsed payload successfully"); p }
+        None => { 
+            error!("Failed to parse webhook payload. Body was: {}", &body); 
+            return Ok(StatusCode::OK); 
+        }
+    };
 
-                let direction = if recipient_id == &state.config.facebook_page_id {
-                    "incoming"
-                } else {
-                    "outgoing"
-                };
+    for entry in payload.entry {
+        debug!("Processing entry: {}", entry.id);
+        for message in entry.messaging {
+            let sender_id = match &message.sender.id {
+                Some(id) => id,
+                None => continue,
+            };
+            let recipient_id = match &message.recipient.id {
+                Some(id) => id,
+                None => continue,
+            };
+            let msg = match &message.message {
+                Some(m) => m,
+                None => continue,
+            };
 
-                let text = msg.text.clone().or_else(|| msg.quick_reply.as_ref().map(|q| q.payload.clone()));
+            let direction = if recipient_id == &state.config.facebook_page_id {
+                "incoming"
+            } else {
+                "outgoing"
+            };
+
+            let text = msg.text.clone().or_else(|| msg.quick_reply.as_ref().map(|q| q.payload.clone()));
 
                 if let Some(text) = text {
                     if let Ok(customer) = state.customer_client.get_or_create_customer(sender_id, "facebook", None).await {
