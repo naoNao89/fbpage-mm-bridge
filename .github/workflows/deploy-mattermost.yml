@@ -22,11 +22,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      contains(join(github.event.head_commit.modified, ','), 'services/') ||
-      contains(join(github.event.head_commit.added, ','), 'services/') ||
-      contains(join(github.event.head_commit.removed, ','), 'services/')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     outputs:
       image_refs: ${{ steps.meta.outputs.tags }}
     steps:
