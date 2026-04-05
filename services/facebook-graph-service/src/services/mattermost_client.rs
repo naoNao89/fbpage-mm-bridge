@@ -94,6 +94,10 @@ impl MattermostClient {
             }
         }
 
+        if self.token.lock().unwrap().is_none() {
+            anyhow::bail!("Mattermost login: no token found in response headers or body");
+        }
+
         Ok(())
     }
 
