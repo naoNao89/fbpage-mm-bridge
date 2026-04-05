@@ -127,8 +127,11 @@ fn parse_webhook_entry(body: &str) -> Option<WebhookEntry> {
 
 #[derive(Debug, Deserialize)]
 pub struct WebhookVerificationParams {
+    #[serde(rename = "hub.mode")]
     pub hub_mode: String,
+    #[serde(rename = "hub.verify_token")]
     pub hub_verify_token: String,
+    #[serde(rename = "hub.challenge")]
     pub hub_challenge: String,
 }
 
