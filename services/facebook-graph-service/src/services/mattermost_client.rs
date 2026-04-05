@@ -75,22 +75,27 @@ impl MattermostClient {
             ));
         }
 
-        // Token is returned in the header "Token"
-        if let Some(token_header) = resp.headers().get("Token") {
-            if let Ok(token_str) = token_header.to_str() {
-                let mut tok = self.token.lock().expect("token lock poisoned");
-                *tok = Some(token_str.to_string());
+        let mut found_token = None;
+        for header_name in &["Token", "token", "TOKEN"] {
+            if let Some(token_header) = resp.headers().get(*header_name) {
+                if let Ok(token_str) = token_header.to_str() {
+                    found_token = Some(token_str.to_string());
+                    break;
+                }
             }
         }
 
-        // If not in header, try to read body as JSON with token field (fallback)
-        if self.token.lock().unwrap().is_none() {
+        if found_token.is_none() {
             if let Ok(json) = resp.json::<serde_json::Value>().await {
                 if let Some(t) = json.get("token").and_then(|v| v.as_str()) {
-                    let mut tok = self.token.lock().expect("token lock poisoned");
-                    *tok = Some(t.to_string());
+                    found_token = Some(t.to_string());
                 }
             }
+        }
+
+        if let Some(token) = found_token {
+            let mut tok = self.token.lock().expect("token lock poisoned");
+            *tok = Some(token);
         }
 
         Ok(())
