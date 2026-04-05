@@ -54,44 +54,46 @@ pub async fn webhook_handler(
 ) -> Result<StatusCode, (StatusCode, String)> {
     info!("Received webhook event");
 
-    if let Some(entry) = parse_webhook_entry(&body) {
-        for message in entry.messaging {
-            let sender_id = match &message.sender.id {
-                Some(id) => id,
-                None => continue,
-            };
-            let recipient_id = match &message.recipient.id {
-                Some(id) => id,
-                None => continue,
-            };
-            let msg = match &message.message {
-                Some(m) => m,
-                None => continue,
-            };
+    if let Some(payload) = parse_webhook_entry(&body) {
+        for entry in payload.entry {
+            for message in entry.messaging {
+                let sender_id = match &message.sender.id {
+                    Some(id) => id,
+                    None => continue,
+                };
+                let recipient_id = match &message.recipient.id {
+                    Some(id) => id,
+                    None => continue,
+                };
+                let msg = match &message.message {
+                    Some(m) => m,
+                    None => continue,
+                };
 
-            let direction = if recipient_id == &state.config.facebook_page_id {
-                "incoming"
-            } else {
-                "outgoing"
-            };
+                let direction = if recipient_id == &state.config.facebook_page_id {
+                    "incoming"
+                } else {
+                    "outgoing"
+                };
 
-            let text = msg.text.clone().or_else(|| msg.quick_reply.as_ref().map(|q| q.payload.clone()));
+                let text = msg.text.clone().or_else(|| msg.quick_reply.as_ref().map(|q| q.payload.clone()));
 
-            if let Some(text) = text {
-                if let Ok(customer) = state.customer_client.get_or_create_customer(sender_id, "facebook", None).await {
-                    let payload = MessageServicePayload {
-                        conversation_id: recipient_id.clone(),
-                        customer_id: customer.id,
-                        platform: "facebook".to_string(),
-                        direction: direction.to_string(),
-                        message_text: Some(text.clone()),
-                        external_id: msg.mid.clone(),
-                        created_at: chrono::Utc::now(),
-                    };
-                    let _ = state.message_client.store_message(payload).await;
+                if let Some(text) = text {
+                    if let Ok(customer) = state.customer_client.get_or_create_customer(sender_id, "facebook", None).await {
+                        let payload = MessageServicePayload {
+                            conversation_id: recipient_id.clone(),
+                            customer_id: customer.id,
+                            platform: "facebook".to_string(),
+                            direction: direction.to_string(),
+                            message_text: Some(text.clone()),
+                            external_id: msg.mid.clone(),
+                            created_at: chrono::Utc::now(),
+                        };
+                        let _ = state.message_client.store_message(payload).await;
 
-                    if direction == "incoming" {
-                        let _ = post_to_mattermost(&state, recipient_id, &text, msg.mid.as_deref()).await;
+                        if direction == "incoming" {
+                            let _ = post_to_mattermost(&state, recipient_id, &text, msg.mid.as_deref()).await;
+                        }
                     }
                 }
             }
@@ -121,7 +123,7 @@ async fn post_to_mattermost(
     Ok(())
 }
 
-fn parse_webhook_entry(body: &str) -> Option<WebhookEntry> {
+fn parse_webhook_entry(body: &str) -> Option<WebhookPayload> {
     serde_json::from_str(body).ok()
 }
 
@@ -136,7 +138,15 @@ pub struct WebhookVerificationParams {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct WebhookPayload {
+    pub object: String,
+    pub entry: Vec<WebhookEntry>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct WebhookEntry {
+    pub id: String,
+    pub time: i64,
     pub messaging: Vec<WebhookMessaging>,
 }
 
