@@ -34,3 +34,6 @@ logs/
 .github/deploy_key.pub
 *.pem
 *.key
+
+# SSL certificates (use Let's Encrypt via certbot)
+certs/

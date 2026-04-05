@@ -201,12 +201,15 @@ jobs:
               cp .env.example .env || true
             fi
 
-            # Ensure SSL certificates exist (required for webhook endpoint)
+            # Copy SSL certificates from Let's Encrypt (where certbot stores them) to repo dir
             mkdir -p certs
+            if [ -d "/etc/letsencrypt/live/${WEBHOOK_DOMAIN}" ]; then
+              cp "/etc/letsencrypt/live/${WEBHOOK_DOMAIN}/fullchain.pem" certs/ 2>/dev/null || true
+              cp "/etc/letsencrypt/live/${WEBHOOK_DOMAIN}/privkey.pem" certs/ 2>/dev/null || true
+            fi
             if [ ! -f "certs/fullchain.pem" ] || [ ! -f "certs/privkey.pem" ]; then
-              echo "ERROR: SSL certificates not found in certs/ directory."
-              echo "Certificate files certs/fullchain.pem and certs/privkey.pem are required."
-              echo "Please ensure certificates exist before deploying."
+              echo "ERROR: SSL certificates not found."
+              echo "Please run: certbot certonly --dns-cloudflare -d ${WEBHOOK_DOMAIN}"
               exit 1
             fi
 
