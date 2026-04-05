@@ -70,34 +70,28 @@ impl MattermostClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
             return Err(anyhow::anyhow!(
-                "Mattermost login failed with {status}"
+                "Mattermost login failed with {status}: {body}"
             ));
         }
 
-        let mut found_token = None;
-        for header_name in &["Token", "token", "TOKEN"] {
-            if let Some(token_header) = resp.headers().get(*header_name) {
-                if let Ok(token_str) = token_header.to_str() {
-                    found_token = Some(token_str.to_string());
-                    break;
-                }
+        // Token is returned in the header "Token"
+        if let Some(token_header) = resp.headers().get("Token") {
+            if let Ok(token_str) = token_header.to_str() {
+                let mut tok = self.token.lock().expect("token lock poisoned");
+                *tok = Some(token_str.to_string());
             }
         }
 
-        if found_token.is_none() {
+        // If not in header, try to read body as JSON with token field (fallback)
+        if self.token.lock().unwrap().is_none() {
             if let Ok(json) = resp.json::<serde_json::Value>().await {
                 if let Some(t) = json.get("token").and_then(|v| v.as_str()) {
-                    found_token = Some(t.to_string());
+                    let mut tok = self.token.lock().expect("token lock poisoned");
+                    *tok = Some(t.to_string());
                 }
             }
-        }
-
-        if let Some(token) = found_token {
-            let mut tok = self.token.lock().expect("token lock poisoned");
-            *tok = Some(token);
-        } else {
-            anyhow::bail!("Mattermost login: no token found in response");
         }
 
         Ok(())
@@ -128,8 +122,9 @@ impl MattermostClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
             return Err(anyhow::anyhow!(
-                "Mattermost get_teams failed with {status}"
+                "Mattermost get_teams failed with {status}: {body}"
             ));
         }
 
@@ -204,8 +199,9 @@ impl MattermostClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
             return Err(anyhow::anyhow!(
-                "Mattermost channel create failed {status}"
+                "Mattermost channel create failed {status}: {body}"
             ));
         }
 
@@ -261,7 +257,8 @@ impl MattermostClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            return Err(anyhow::anyhow!("Mattermost post failed {status}"));
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Mattermost post failed {status}: {body}"));
         }
 
         let post: PostResponse = resp.json().await.context("Failed to parse post response")?;
