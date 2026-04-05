@@ -127,6 +127,9 @@ jobs:
           MM_ADMIN_PASSWORD: ${{ secrets.MM_ADMIN_PASSWORD }}
           WEBHOOK_DOMAIN: ${{ secrets.WEBHOOK_DOMAIN }}
           FACEBOOK_WEBHOOK_VERIFY_TOKEN: ${{ secrets.FACEBOOK_WEBHOOK_VERIFY_TOKEN }}
+          FACEBOOK_APP_ID: ${{ secrets.FACEBOOK_APP_ID }}
+          FACEBOOK_APP_SECRET: ${{ secrets.FACEBOOK_APP_SECRET }}
+          FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
           SSL_EMAIL: ${{ secrets.SSL_EMAIL }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
@@ -143,6 +146,9 @@ jobs:
           export MM_ADMIN_PASSWORD='$MM_ADMIN_PASSWORD'
           export WEBHOOK_DOMAIN='$WEBHOOK_DOMAIN'
           export FACEBOOK_WEBHOOK_VERIFY_TOKEN='$FACEBOOK_WEBHOOK_VERIFY_TOKEN'
+          export FACEBOOK_APP_ID='$FACEBOOK_APP_ID'
+          export FACEBOOK_APP_SECRET='$FACEBOOK_APP_SECRET'
+          export FACEBOOK_PAGE_ACCESS_TOKEN='$FACEBOOK_PAGE_ACCESS_TOKEN'
           export SSL_EMAIL='$SSL_EMAIL'
           export REPO='$REPO'
           export BRANCH='$BRANCH'
@@ -199,6 +205,20 @@ jobs:
 
             if [ ! -f .env ]; then
               cp .env.example .env || true
+            fi
+
+            # Update Facebook credentials from secrets
+            if [ -n "$FACEBOOK_APP_ID" ]; then
+              sed -i "s/^FACEBOOK_APP_ID=.*/FACEBOOK_APP_ID=$FACEBOOK_APP_ID/" .env
+            fi
+            if [ -n "$FACEBOOK_APP_SECRET" ]; then
+              sed -i "s/^FACEBOOK_APP_SECRET=.*/FACEBOOK_APP_SECRET=$FACEBOOK_APP_SECRET/" .env
+            fi
+            if [ -n "$FACEBOOK_PAGE_ACCESS_TOKEN" ]; then
+              sed -i "s|^FACEBOOK_PAGE_ACCESS_TOKEN=.*|FACEBOOK_PAGE_ACCESS_TOKEN=$FACEBOOK_PAGE_ACCESS_TOKEN|" .env
+            fi
+            if [ -n "$FACEBOOK_WEBHOOK_VERIFY_TOKEN" ]; then
+              sed -i "s/^FACEBOOK_WEBHOOK_VERIFY_TOKEN=.*/FACEBOOK_WEBHOOK_VERIFY_TOKEN=$FACEBOOK_WEBHOOK_VERIFY_TOKEN/" .env
             fi
 
             # Copy SSL certificates from Let's Encrypt (where certbot stores them) to repo dir
