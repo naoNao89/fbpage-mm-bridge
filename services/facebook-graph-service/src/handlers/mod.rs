@@ -55,10 +55,13 @@ pub async fn webhook_handler(
     info!("Received webhook event: {}", &body);
 
     let payload = match parse_webhook_entry(&body) {
-        Some(p) => { debug!("Parsed payload successfully"); p }
-        None => { 
-            error!("Failed to parse webhook payload. Body was: {}", &body); 
-            return Ok(StatusCode::OK); 
+        Some(p) => {
+            debug!("Parsed payload successfully");
+            p
+        }
+        None => {
+            error!("Failed to parse webhook payload. Body was: {}", &body);
+            return Ok(StatusCode::OK);
         }
     };
 
@@ -84,10 +87,17 @@ pub async fn webhook_handler(
                 "outgoing"
             };
 
-            let text = msg.text.clone().or_else(|| msg.quick_reply.as_ref().map(|q| q.payload.clone()));
+            let text = msg
+                .text
+                .clone()
+                .or_else(|| msg.quick_reply.as_ref().map(|q| q.payload.clone()));
 
             if let Some(text) = text {
-                if let Ok(customer) = state.customer_client.get_or_create_customer(sender_id, "facebook", None).await {
+                if let Ok(customer) = state
+                    .customer_client
+                    .get_or_create_customer(sender_id, "facebook", None)
+                    .await
+                {
                     let payload = MessageServicePayload {
                         conversation_id: recipient_id.clone(),
                         customer_id: customer.id,
@@ -100,7 +110,8 @@ pub async fn webhook_handler(
                     let _ = state.message_client.store_message(payload).await;
 
                     if direction == "incoming" {
-                        let _ = post_to_mattermost(&state, recipient_id, &text, msg.mid.as_deref()).await;
+                        let _ = post_to_mattermost(&state, recipient_id, &text, msg.mid.as_deref())
+                            .await;
                     }
                 }
             }
@@ -118,13 +129,17 @@ async fn post_to_mattermost(
 ) -> Result<(), anyhow::Error> {
     let mm = &state.mattermost_client;
     if let Ok(team_id) = mm.get_team_id().await {
-        if let Ok(channel_id) = mm.get_or_create_channel(&team_id, conversation_id, conversation_id).await {
+        if let Ok(channel_id) = mm
+            .get_or_create_channel(&team_id, conversation_id, conversation_id)
+            .await
+        {
             let root = if let Some(r) = root_id {
                 Some(r.to_string())
             } else {
                 mm.get_root_id(conversation_id).await.ok().flatten()
             };
-            mm.post_message(&channel_id, text, root.as_deref(), None).await?;
+            mm.post_message(&channel_id, text, root.as_deref(), None)
+                .await?;
         }
     }
     Ok(())

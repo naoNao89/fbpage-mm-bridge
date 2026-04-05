@@ -45,7 +45,10 @@ pub struct AppState {
 pub fn create_app(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health_check))
-        .route("/webhook/facebook", get(webhook_verification).post(webhook_handler))
+        .route(
+            "/webhook/facebook",
+            get(webhook_verification).post(webhook_handler),
+        )
         .route("/api/import/conversations", post(import_all_conversations))
         .route(
             "/api/import/conversation/:id",
