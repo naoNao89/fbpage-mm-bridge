@@ -201,6 +201,15 @@ jobs:
               cp .env.example .env || true
             fi
 
+            # Ensure SSL certificates exist (required for webhook endpoint)
+            mkdir -p certs
+            if [ ! -f "certs/fullchain.pem" ] || [ ! -f "certs/privkey.pem" ]; then
+              echo "ERROR: SSL certificates not found in certs/ directory."
+              echo "Certificate files certs/fullchain.pem and certs/privkey.pem are required."
+              echo "Please ensure certificates exist before deploying."
+              exit 1
+            fi
+
             # Pull pre-built images from GHCR instead of building locally
             export GHCR_OWNER="${{ env.GHCR_OWNER }}"
             docker compose -f docker-compose.yml pull
