@@ -398,18 +398,21 @@ jobs:
         run: |
           docker buildx create --use || true
           docker buildx build --platform linux/amd64,linux/arm64 \
+            -f services/customer-service/Dockerfile \
             -t ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:latest \
             -t ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:${{ github.sha }} \
-            ./services/customer-service --pull --push
+            . --pull --push
       - name: Build and Push message-service
         run: |
           docker buildx build --platform linux/amd64,linux/arm64 \
+            -f services/message-service/Dockerfile \
             -t ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:latest \
             -t ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:${{ github.sha }} \
-            ./services/message-service --pull --push
+            . --pull --push
       - name: Build and Push facebook-graph-service
         run: |
           docker buildx build --platform linux/amd64,linux/arm64 \
+            -f services/facebook-graph-service/Dockerfile \
             -t ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:latest \
             -t ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:${{ github.sha }} \
-            ./services/facebook-graph-service --pull --push
+            . --pull --push
