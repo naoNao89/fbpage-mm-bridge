@@ -86,22 +86,21 @@ pub async fn webhook_handler(
 
             let text = msg.text.clone().or_else(|| msg.quick_reply.as_ref().map(|q| q.payload.clone()));
 
-                if let Some(text) = text {
-                    if let Ok(customer) = state.customer_client.get_or_create_customer(sender_id, "facebook", None).await {
-                        let payload = MessageServicePayload {
-                            conversation_id: recipient_id.clone(),
-                            customer_id: customer.id,
-                            platform: "facebook".to_string(),
-                            direction: direction.to_string(),
-                            message_text: Some(text.clone()),
-                            external_id: msg.mid.clone(),
-                            created_at: chrono::Utc::now(),
-                        };
-                        let _ = state.message_client.store_message(payload).await;
+            if let Some(text) = text {
+                if let Ok(customer) = state.customer_client.get_or_create_customer(sender_id, "facebook", None).await {
+                    let payload = MessageServicePayload {
+                        conversation_id: recipient_id.clone(),
+                        customer_id: customer.id,
+                        platform: "facebook".to_string(),
+                        direction: direction.to_string(),
+                        message_text: Some(text.clone()),
+                        external_id: msg.mid.clone(),
+                        created_at: chrono::Utc::now(),
+                    };
+                    let _ = state.message_client.store_message(payload).await;
 
-                        if direction == "incoming" {
-                            let _ = post_to_mattermost(&state, recipient_id, &text, msg.mid.as_deref()).await;
-                        }
+                    if direction == "incoming" {
+                        let _ = post_to_mattermost(&state, recipient_id, &text, msg.mid.as_deref()).await;
                     }
                 }
             }
