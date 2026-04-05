@@ -96,7 +96,7 @@ services:
     networks:
       - fbpage-mm-network
 
-  # Nginx Reverse Proxy - Handles SSL termination and routes Facebook webhook
+  # Nginx Reverse Proxy
   nginx:
     image: nginx:1.25-alpine
     container_name: nginx

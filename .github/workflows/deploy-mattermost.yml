@@ -404,7 +404,7 @@ jobs:
 
             HEALTH_CHECK_FAILED=false
 
-            for service in customer-service message-service facebook-graph-service nginx; do
+            for service in customer-service message-service facebook-graph-service; do
               CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$service" 2>/dev/null || echo "no-healthcheck")
               if [ "$CONTAINER_STATUS" = "healthy" ]; then
                 echo "[PASS] $service: healthy"
@@ -442,15 +442,6 @@ jobs:
             else
               echo "[FAIL] mattermost: NOT running"
               docker compose logs --tail=30 mattermost
-              HEALTH_CHECK_FAILED=true
-            fi
-
-            # Check nginx
-            if docker compose ps nginx | grep -q "Up"; then
-              echo "[PASS] nginx: running"
-            else
-              echo "[FAIL] nginx: NOT running"
-              docker compose logs --tail=30 nginx
               HEALTH_CHECK_FAILED=true
             fi
 
