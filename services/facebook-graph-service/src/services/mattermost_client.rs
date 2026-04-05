@@ -96,6 +96,8 @@ impl MattermostClient {
         if let Some(token) = found_token {
             let mut tok = self.token.lock().expect("token lock poisoned");
             *tok = Some(token);
+        } else {
+            anyhow::bail!("Mattermost login: no token found in response");
         }
 
         Ok(())
