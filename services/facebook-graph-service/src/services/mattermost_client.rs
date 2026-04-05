@@ -126,9 +126,8 @@ impl MattermostClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
             return Err(anyhow::anyhow!(
-                "Mattermost get_teams failed with {status}: {body}"
+                "Mattermost get_teams failed with {status}"
             ));
         }
 
@@ -203,9 +202,8 @@ impl MattermostClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
             return Err(anyhow::anyhow!(
-                "Mattermost channel create failed {status}: {body}"
+                "Mattermost channel create failed {status}"
             ));
         }
 
@@ -261,8 +259,7 @@ impl MattermostClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Mattermost post failed {status}: {body}"));
+            return Err(anyhow::anyhow!("Mattermost post failed {status}"));
         }
 
         let post: PostResponse = resp.json().await.context("Failed to parse post response")?;
