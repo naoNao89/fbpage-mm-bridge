@@ -18,6 +18,8 @@ pub struct Config {
     pub facebook_app_id: String,
     /// Facebook App Secret (for token exchange)
     pub facebook_app_secret: String,
+    /// Facebook Webhook Verify Token (for Facebook webhook verification)
+    pub facebook_webhook_verify_token: String,
     /// Customer Service URL
     pub customer_service_url: String,
     /// Message Service URL
@@ -56,6 +58,8 @@ impl Config {
                 .context("FACEBOOK_PAGE_ACCESS_TOKEN must be set")?,
             facebook_app_id: env::var("FACEBOOK_APP_ID").unwrap_or_default(),
             facebook_app_secret: env::var("FACEBOOK_APP_SECRET").unwrap_or_default(),
+            facebook_webhook_verify_token: env::var("FACEBOOK_WEBHOOK_VERIFY_TOKEN")
+                .unwrap_or_default(),
             customer_service_url: env::var("CUSTOMER_SERVICE_URL")
                 .context("CUSTOMER_SERVICE_URL must be set")?,
             message_service_url: env::var("MESSAGE_SERVICE_URL")

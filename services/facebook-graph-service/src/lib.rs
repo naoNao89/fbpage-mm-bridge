@@ -27,7 +27,7 @@ use sqlx::PgPool;
 use crate::config::Config;
 use crate::handlers::{
     exchange_token, get_import_status, health_check, import_all_conversations,
-    import_single_conversation,
+    import_single_conversation, webhook_handler, webhook_verification,
 };
 use crate::services::{CustomerServiceClient, MattermostClient, MessageServiceClient};
 
@@ -44,17 +44,14 @@ pub struct AppState {
 /// Create the application router
 pub fn create_app(state: AppState) -> Router {
     Router::new()
-        // Health check
         .route("/health", get(health_check))
-        // Import endpoints
+        .route("/webhook/facebook", get(webhook_verification).post(webhook_handler))
         .route("/api/import/conversations", post(import_all_conversations))
         .route(
             "/api/import/conversation/:id",
             post(import_single_conversation),
         )
-        // Status endpoint
         .route("/api/status", get(get_import_status))
-        // Token exchange endpoint
         .route("/api/token/exchange", post(exchange_token))
         .with_state(state)
 }

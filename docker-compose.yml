@@ -77,6 +77,7 @@ services:
       - FACEBOOK_PAGE_ACCESS_TOKEN=${FACEBOOK_PAGE_ACCESS_TOKEN}
       - FACEBOOK_APP_ID=${FACEBOOK_APP_ID}
       - FACEBOOK_APP_SECRET=${FACEBOOK_APP_SECRET}
+      - FACEBOOK_WEBHOOK_VERIFY_TOKEN=${FACEBOOK_WEBHOOK_VERIFY_TOKEN}
       - CUSTOMER_SERVICE_URL=http://customer-service:3001
       - MESSAGE_SERVICE_URL=http://message-service:3002
     depends_on:
@@ -92,6 +93,23 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    networks:
+      - fbpage-mm-network
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_BIND_IP:-0.0.0.0}:${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/letsencrypt:ro
+    depends_on:
+      facebook-graph-service:
+        condition: service_healthy
     networks:
       - fbpage-mm-network
 

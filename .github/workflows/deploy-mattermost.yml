@@ -3,6 +3,12 @@ name: Deploy Mattermost (Docker Compose)
 on:
   push:
     branches: [ "main", "dev/**" ]
+    paths:
+      - 'services/**'
+      - 'docker-compose.yml'
+      - 'nginx/**'
+      - 'Dockerfile.nginx'
+      - '.github/workflows/deploy-mattermost.yml'
   workflow_dispatch:
 
 permissions:
@@ -16,6 +22,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     outputs:
       image_refs: ${{ steps.meta.outputs.tags }}
     steps:
@@ -91,7 +98,8 @@ jobs:
 
   deploy:
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build]
+    if: always()
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -117,6 +125,9 @@ jobs:
           MM_BOT_DISPLAY_NAME: ${{ secrets.MM_BOT_DISPLAY_NAME }}
           MM_BOT_DESCRIPTION: ${{ secrets.MM_BOT_DESCRIPTION }}
           MM_ADMIN_PASSWORD: ${{ secrets.MM_ADMIN_PASSWORD }}
+          WEBHOOK_DOMAIN: ${{ secrets.WEBHOOK_DOMAIN }}
+          FACEBOOK_WEBHOOK_VERIFY_TOKEN: ${{ secrets.FACEBOOK_WEBHOOK_VERIFY_TOKEN }}
+          SSL_EMAIL: ${{ secrets.SSL_EMAIL }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
@@ -130,6 +141,9 @@ jobs:
           export MM_BOT_DISPLAY_NAME='$MM_BOT_DISPLAY_NAME'
           export MM_BOT_DESCRIPTION='$MM_BOT_DESCRIPTION'
           export MM_ADMIN_PASSWORD='$MM_ADMIN_PASSWORD'
+          export WEBHOOK_DOMAIN='$WEBHOOK_DOMAIN'
+          export FACEBOOK_WEBHOOK_VERIFY_TOKEN='$FACEBOOK_WEBHOOK_VERIFY_TOKEN'
+          export SSL_EMAIL='$SSL_EMAIL'
           export REPO='$REPO'
           export BRANCH='$BRANCH'
           export IMAGE_TAG='$IMAGE_TAG'
@@ -140,6 +154,10 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o ServerAliveInterval=30 -o ServerAliveCountMax=120 ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} bash << 'EOF'
             set -euo pipefail
             source /tmp/deploy-env.sh
+            export NGINX_BIND_IP="$(ip -4 addr show dev eth0 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 | grep -v "^10\." | grep -v "^172\." | grep -v "^192\.168\." | head -1 || echo 0.0.0.0)"
+            echo "=== DEBUG: NGINX_BIND_IP=$NGINX_BIND_IP ==="
+            echo "=== DEBUG: ip addr eth0 ==="
+            ip -4 addr show dev eth0 2>/dev/null || echo "eth0 not found"
             export USER="${USER:-$(whoami)}"
 
             export STACK_DIR="/opt/mattermost"
@@ -183,6 +201,18 @@ jobs:
               cp .env.example .env || true
             fi
 
+            # Copy SSL certificates from Let's Encrypt (where certbot stores them) to repo dir
+            mkdir -p certs
+            if [ -d "/etc/letsencrypt/live/${WEBHOOK_DOMAIN}" ]; then
+              cp "/etc/letsencrypt/live/${WEBHOOK_DOMAIN}/fullchain.pem" certs/ 2>/dev/null || true
+              cp "/etc/letsencrypt/live/${WEBHOOK_DOMAIN}/privkey.pem" certs/ 2>/dev/null || true
+            fi
+            if [ ! -f "certs/fullchain.pem" ] || [ ! -f "certs/privkey.pem" ]; then
+              echo "ERROR: SSL certificates not found."
+              echo "Please run: certbot certonly --dns-cloudflare -d ${WEBHOOK_DOMAIN}"
+              exit 1
+            fi
+
             # Pull pre-built images from GHCR instead of building locally
             export GHCR_OWNER="${{ env.GHCR_OWNER }}"
             docker compose -f docker-compose.yml pull
@@ -191,6 +221,12 @@ jobs:
             docker rm -f customer-service message-service facebook-graph-service fbpage-mm-bridge customer-service-db message-service-db facebook-graph-service-db fbpage-mm-bridge-db 2>/dev/null || true
             docker compose down --remove-orphans 2>/dev/null || true
             docker compose up -d
+
+            echo "=== DEBUG: nginx container ==="
+            docker ps -a --filter name=nginx --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+            docker logs nginx 2>&1 | tail -20
+            ss -tlnp 'sport = :80' 2>/dev/null || echo "Port 80 not listening"
+            ss -tlnp 'sport = :443' 2>/dev/null || echo "Port 443 not listening"
 
             MM_CONTAINER_ID="$(docker compose ps -q mattermost)"
             if [ -n "$MM_CONTAINER_ID" ]; then

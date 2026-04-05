@@ -33,6 +33,156 @@ pub async fn health_check() -> &'static str {
     "OK"
 }
 
+// Facebook Webhook Handlers
+
+pub async fn webhook_verification(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<WebhookVerificationParams>,
+) -> Result<String, (StatusCode, String)> {
+    if params.hub_mode != "subscribe" {
+        return Err((StatusCode::BAD_REQUEST, "Invalid hub.mode".to_string()));
+    }
+    if params.hub_verify_token != state.config.facebook_webhook_verify_token {
+        return Err((StatusCode::FORBIDDEN, "Invalid verify token".to_string()));
+    }
+    Ok(params.hub_challenge)
+}
+
+pub async fn webhook_handler(
+    State(state): State<AppState>,
+    body: String,
+) -> Result<StatusCode, (StatusCode, String)> {
+    info!("Received webhook event: {}", &body);
+
+    let payload = match parse_webhook_entry(&body) {
+        Some(p) => { debug!("Parsed payload successfully"); p }
+        None => { 
+            error!("Failed to parse webhook payload. Body was: {}", &body); 
+            return Ok(StatusCode::OK); 
+        }
+    };
+
+    for entry in payload.entry {
+        debug!("Processing entry: {}", entry.id);
+        for message in entry.messaging {
+            let sender_id = match &message.sender.id {
+                Some(id) => id,
+                None => continue,
+            };
+            let recipient_id = match &message.recipient.id {
+                Some(id) => id,
+                None => continue,
+            };
+            let msg = match &message.message {
+                Some(m) => m,
+                None => continue,
+            };
+
+            let direction = if recipient_id == &state.config.facebook_page_id {
+                "incoming"
+            } else {
+                "outgoing"
+            };
+
+            let text = msg.text.clone().or_else(|| msg.quick_reply.as_ref().map(|q| q.payload.clone()));
+
+            if let Some(text) = text {
+                if let Ok(customer) = state.customer_client.get_or_create_customer(sender_id, "facebook", None).await {
+                    let payload = MessageServicePayload {
+                        conversation_id: recipient_id.clone(),
+                        customer_id: customer.id,
+                        platform: "facebook".to_string(),
+                        direction: direction.to_string(),
+                        message_text: Some(text.clone()),
+                        external_id: msg.mid.clone(),
+                        created_at: chrono::Utc::now(),
+                    };
+                    let _ = state.message_client.store_message(payload).await;
+
+                    if direction == "incoming" {
+                        let _ = post_to_mattermost(&state, recipient_id, &text, msg.mid.as_deref()).await;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(StatusCode::OK)
+}
+
+async fn post_to_mattermost(
+    state: &AppState,
+    conversation_id: &str,
+    text: &str,
+    root_id: Option<&str>,
+) -> Result<(), anyhow::Error> {
+    let mm = &state.mattermost_client;
+    if let Ok(team_id) = mm.get_team_id().await {
+        if let Ok(channel_id) = mm.get_or_create_channel(&team_id, conversation_id, conversation_id).await {
+            let root = if let Some(r) = root_id {
+                Some(r.to_string())
+            } else {
+                mm.get_root_id(conversation_id).await.ok().flatten()
+            };
+            mm.post_message(&channel_id, text, root.as_deref(), None).await?;
+        }
+    }
+    Ok(())
+}
+
+fn parse_webhook_entry(body: &str) -> Option<WebhookPayload> {
+    serde_json::from_str(body).ok()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookVerificationParams {
+    #[serde(rename = "hub.mode")]
+    pub hub_mode: String,
+    #[serde(rename = "hub.verify_token")]
+    pub hub_verify_token: String,
+    #[serde(rename = "hub.challenge")]
+    pub hub_challenge: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookPayload {
+    pub object: String,
+    pub entry: Vec<WebhookEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookEntry {
+    pub id: String,
+    pub time: i64,
+    pub messaging: Vec<WebhookMessaging>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookMessaging {
+    pub sender: WebhookSender,
+    pub recipient: WebhookSender,
+    pub message: Option<WebhookMessage>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookSender {
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookMessage {
+    pub mid: Option<String>,
+    pub text: Option<String>,
+    pub quick_reply: Option<WebhookQuickReply>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookQuickReply {
+    pub payload: String,
+}
+
+// Existing Handlers
+
 /// Start import for all conversations
 pub async fn import_all_conversations(
     State(state): State<AppState>,
