@@ -460,7 +460,7 @@ jobs:
               fi
             done
             docker compose down --remove-orphans 2>/dev/null || true
-            docker compose up -d
+            docker compose up -d --wait --wait-timeout 120
 
             echo "=== DEBUG: nginx container ==="
             docker compose ps nginx
