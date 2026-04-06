@@ -389,9 +389,9 @@ jobs:
               fi
             fi
 
-            sed -i 's|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD='"${POSTGRES_PASSWORD}"'|g' .env
+            sed -i 's|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD='"${POSTGRES_PASSWORD:-postgres}"'|g' .env
             sed -i 's|^MATTERMOST_PASSWORD=.*|MATTERMOST_PASSWORD='"${MATTERMOST_PASSWORD}"'|g' .env
-            sed -i 's|^MATTERMOST_USERNAME=.*|MATTERMOST_USERNAME='"${MM_ADMIN_USERNAME}"'|g' .env
+            sed -i 's|^MATTERMOST_USERNAME=.*|MATTERMOST_USERNAME='"${MM_ADMIN_USERNAME:-admin}"'|g' .env
             sed -i 's|^FACEBOOK_PAGE_ACCESS_TOKEN=.*|FACEBOOK_PAGE_ACCESS_TOKEN='"${FACEBOOK_PAGE_ACCESS_TOKEN}"'|g' .env
             sed -i 's|^FACEBOOK_APP_ID=.*|FACEBOOK_APP_ID='"${FACEBOOK_APP_ID}"'|g' .env
             sed -i 's|^FACEBOOK_APP_SECRET=.*|FACEBOOK_APP_SECRET='"${FACEBOOK_APP_SECRET}"'|g' .env
