@@ -460,7 +460,9 @@ jobs:
               fi
             done
             docker compose down --remove-orphans 2>/dev/null || true
-            docker compose up -d
+            docker compose down --remove-orphans --timeout 30 2>/dev/null || true
+            sleep 10
+            docker compose up -d || true
 
             echo "Waiting for containers to be created..."
             for i in $(seq 1 30); do
