@@ -443,7 +443,7 @@ jobs:
             for db_svc in mattermost-db message-service-db customer-service-db facebook-graph-service-db; do
               if docker compose ps "$db_svc" &>/dev/null; then
                 echo "Removing stale container: $db_svc"
-                docker compose rm -sf "$db_svc" || true
+                docker rm -f "$db_svc" || true
               fi
             done
 
