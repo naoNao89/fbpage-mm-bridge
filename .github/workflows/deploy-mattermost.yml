@@ -389,13 +389,11 @@ jobs:
               fi
             fi
 
-            sed -i 's|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD='"${POSTGRES_PASSWORD:-postgres}"'|g' .env
-            sed -i 's|^MATTERMOST_PASSWORD=.*|MATTERMOST_PASSWORD='"${MATTERMOST_PASSWORD}"'|g' .env
-            sed -i 's|^MATTERMOST_USERNAME=.*|MATTERMOST_USERNAME='"${MM_ADMIN_USERNAME:-admin}"'|g' .env
-            sed -i 's|^FACEBOOK_PAGE_ACCESS_TOKEN=.*|FACEBOOK_PAGE_ACCESS_TOKEN='"${FACEBOOK_PAGE_ACCESS_TOKEN}"'|g' .env
-            sed -i 's|^FACEBOOK_APP_ID=.*|FACEBOOK_APP_ID='"${FACEBOOK_APP_ID}"'|g' .env
-            sed -i 's|^FACEBOOK_APP_SECRET=.*|FACEBOOK_APP_SECRET='"${FACEBOOK_APP_SECRET}"'|g' .env
-            sed -i 's|^FACEBOOK_PAGE_ID=.*|FACEBOOK_PAGE_ID='"${FACEBOOK_PAGE_ID}"'|g' .env
+            for var in POSTGRES_PASSWORD MATTERMOST_PASSWORD MATTERMOST_USERNAME FACEBOOK_PAGE_ACCESS_TOKEN FACEBOOK_APP_ID FACEBOOK_APP_SECRET FACEBOOK_PAGE_ID; do
+              val_var="${var}"
+              eval "val=\"\${${val_var}-}\""
+              sed -i "s|^${var}=.*|${var}=${val}|g" .env
+            done
 
             # Copy SSL certificates from Let's Encrypt (where certbot stores them) to repo dir
             mkdir -p certs
@@ -496,41 +494,47 @@ jobs:
 
             HEALTH_CHECK_FAILED=false
 
-            for service in customer-service message-service facebook-graph-service mm-bridge-bot; do
-              CONTAINER_ID=$(docker compose ps -q "$service")
-              if [ -z "$CONTAINER_ID" ]; then
-                echo "[FAIL] $service: NOT running"
-                docker compose logs --tail=30 "$service"
-                HEALTH_CHECK_FAILED=true
-                continue
-              fi
-              CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_ID" 2>/dev/null || echo "no-healthcheck")
-              if [ "$CONTAINER_STATUS" = "healthy" ]; then
-                echo "[PASS] $service: healthy"
-              elif [ "$CONTAINER_STATUS" = "starting" ]; then
-                echo "[WAIT] $service: still starting (waiting...)"
-                sleep 10
+            poll_service() {
+              local svc="$1"
+              local max_attempts=12
+              local attempt=1
+              while [ $attempt -le $max_attempts ]; do
+                CONTAINER_ID=$(docker compose ps -q "$svc")
+                if [ -z "$CONTAINER_ID" ]; then
+                  if [ $attempt -eq $max_attempts ]; then
+                    echo "[FAIL] $svc: container not found after ${max_attempts} attempts"
+                    return 1
+                  fi
+                  echo "[WAIT] $svc: container not ready (attempt $attempt/$max_attempts)"
+                  sleep 5
+                  attempt=$((attempt + 1))
+                  continue
+                fi
                 CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_ID" 2>/dev/null || echo "no-healthcheck")
-                if [ "$CONTAINER_STATUS" = "healthy" ]; then
-                  echo "[PASS] $service: healthy"
-                else
-                  echo "[FAIL] $service: unhealthy (status: $CONTAINER_STATUS)"
-                  docker compose logs --tail=30 "$service"
-                  HEALTH_CHECK_FAILED=true
+                if [ "$CONTAINER_STATUS" = "healthy" ] || [ "$CONTAINER_STATUS" = "no-healthcheck" ]; then
+                  if docker compose ps "$svc" | grep -q "Up"; then
+                    echo "[PASS] $svc: ready"
+                    return 0
+                  fi
+                elif [ "$CONTAINER_STATUS" = "unhealthy" ]; then
+                  echo "[FAIL] $svc: unhealthy"
+                  docker compose logs --tail=10 "$svc"
+                  return 1
                 fi
-              elif [ "$CONTAINER_STATUS" = "unhealthy" ]; then
-                echo "[FAIL] $service: UNHEALTHY"
-                docker compose logs --tail=30 "$service"
-                HEALTH_CHECK_FAILED=true
-              else
-                if docker compose ps "$service" | grep -q "Up"; then
-                  echo "[PASS] $service: running (no healthcheck available)"
-                else
-                  echo "[FAIL] $service: NOT running"
-                  docker compose logs --tail=30 "$service"
-                  HEALTH_CHECK_FAILED=true
+                if [ $attempt -eq $max_attempts ]; then
+                  echo "[FAIL] $svc: not healthy after ${max_attempts} attempts (status: $CONTAINER_STATUS)"
+                  docker compose logs --tail=10 "$svc"
+                  return 1
                 fi
-              fi
+                echo "[WAIT] $svc: $CONTAINER_STATUS (attempt $attempt/$max_attempts)"
+                sleep 5
+                attempt=$((attempt + 1))
+              done
+              return 1
+            }
+
+            for service in customer-service message-service facebook-graph-service mm-bridge-bot; do
+              poll_service "$service" || HEALTH_CHECK_FAILED=true
             done
 
             # Check Mattermost
