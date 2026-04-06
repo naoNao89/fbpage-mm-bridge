@@ -78,16 +78,14 @@ impl MattermostClient {
             ));
         }
 
-        let token_opt = token_from_header.or_else(|| {
+        let token = token_from_header.or_else(|| {
             serde_json::from_str::<serde_json::Value>(&body_text)
                 .ok()
                 .and_then(|j| j.get("token").and_then(|v| v.as_str()).map(String::from))
-        });
+        }).ok_or_else(|| anyhow::anyhow!("Mattermost login succeeded but no token in response header or body: {body_text}"))?;
 
-        if let Some(t) = token_opt {
-            let mut tok = self.token.lock().expect("token lock poisoned");
-            *tok = Some(t);
-        }
+        let mut tok = self.token.lock().expect("token lock poisoned");
+        *tok = Some(token);
 
         Ok(())
     }
