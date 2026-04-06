@@ -441,7 +441,7 @@ jobs:
 
             # Remove stale containers that conflict with new ones (db containers may persist across runs)
             for db_svc in mattermost-db message-service-db customer-service-db facebook-graph-service-db; do
-              if docker compose ps "$db_svc" &>/dev/null; then
+              if [ -n "$(docker ps -q --filter "name=$db_svc")" ]; then
                 echo "Removing stale container: $db_svc"
                 docker rm -f "$db_svc" || true
               fi
