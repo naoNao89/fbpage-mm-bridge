@@ -15,7 +15,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - RUST_BACKTRACE=1
     depends_on:
-      customer-db:
+      - customer-db
     healthcheck:
       test: ["CMD-SHELL", "exit 0"]
       interval: 10s
@@ -42,10 +42,8 @@ services:
       - RUST_BACKTRACE=1
       - CUSTOMER_SERVICE_URL=http://customer-service:3001
     depends_on:
-      message-db:
-        condition: service_healthy
-      customer-service:
-        condition: service_healthy
+      - message-db
+      - customer-service
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3002/health || exit 1"]
       interval: 10s
@@ -80,12 +78,9 @@ services:
       - MATTERMOST_USERNAME=${MATTERMOST_USERNAME:-admin}
       - MATTERMOST_PASSWORD=${MATTERMOST_PASSWORD}
     depends_on:
-      facebook-db:
-        condition: service_healthy
-      customer-service:
-        condition: service_healthy
-      message-service:
-        condition: service_healthy
+      - facebook-db
+      - customer-service
+      - message-service
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3003/health || exit 1"]
       interval: 10s
@@ -109,10 +104,8 @@ services:
       - CUSTOMER_SERVICE_URL=http://customer-service:3001
       - LOG_LEVEL=${LOG_LEVEL:-info}
     depends_on:
-      mattermost:
-        condition: service_healthy
-      customer-service:
-        condition: service_healthy
+      - mattermost
+      - customer-service
     networks:
       - fbpage-mm-network
 
@@ -127,8 +120,7 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./certs:/etc/letsencrypt:ro
     depends_on:
-      facebook-graph-service:
-        condition: service_healthy
+      - facebook-graph-service
     networks:
       - fbpage-mm-network
 
@@ -215,8 +207,7 @@ services:
       - mattermost_bleve_indexes:/mattermost/bleve-indexes
       - ./secrets/admin_password:/mattermost/config/bootstrap_admin_password:ro
     depends_on:
-      mattermost-db:
-        condition: service_healthy
+      - mattermost-db
     networks:
       - fbpage-mm-network
 
