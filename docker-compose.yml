@@ -263,4 +263,5 @@ volumes:
 
 networks:
   fbpage-mm-network:
-    driver: bridge
+    name: mattermost_fbpage-mm-network
+    external: true
