@@ -6,6 +6,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 
 const POLL_INTERVAL_MS: u64 = 2000;
@@ -14,6 +15,13 @@ const CHANNEL_NAME_PREFIX: &str = "t_";
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new(
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
+        ))
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
     let mattermost_url = std::env::var("MATTERMOST_URL")
         .unwrap_or_else(|_| "http://mattermost:8065".to_string());
