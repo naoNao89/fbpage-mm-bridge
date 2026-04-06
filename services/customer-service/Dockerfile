@@ -8,13 +8,13 @@ COPY Cargo.toml Cargo.lock* ./
 COPY services/customer-service/Cargo.toml services/customer-service/
 COPY services/message-service/Cargo.toml services/message-service/
 COPY services/facebook-graph-service/Cargo.toml services/facebook-graph-service/
+COPY services/mm-bridge-bot/Cargo.toml services/mm-bridge-bot/
 
-# Copy minimal source stubs for target detection (cargo chef prepare needs targets)
 COPY services/customer-service/src services/customer-service/src
 COPY services/message-service/src services/message-service/src
 COPY services/facebook-graph-service/src services/facebook-graph-service/src
+COPY services/mm-bridge-bot/src services/mm-bridge-bot/src
 
-# Generate recipe.json (captures dependency graph)
 RUN cargo chef prepare --recipe-path recipe.json
 
 # Build stage 2: Builder - cook dependencies (cached layer!)
