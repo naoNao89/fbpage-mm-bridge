@@ -459,7 +459,20 @@ jobs:
             done
             docker compose down --remove-orphans 2>/dev/null || true
             docker compose up -d
-            sleep 45
+
+            echo "Waiting for containers to be created..."
+            for i in $(seq 1 30); do
+              RUNNING=$(docker compose ps --format '{{.Names}}' 2>/dev/null | wc -l)
+              if [ "$RUNNING" -ge 10 ]; then
+                echo "All $RUNNING containers created, waiting for startup..."
+                break
+              fi
+              echo "Waiting... ($i/30) containers running: $RUNNING"
+              sleep 2
+            done
+
+            echo "Waiting additional 60s for services to initialize..."
+            sleep 60
 
             echo "=== DEBUG: nginx container ==="
             docker compose ps nginx
