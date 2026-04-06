@@ -80,6 +80,9 @@ services:
       - FACEBOOK_WEBHOOK_VERIFY_TOKEN=${FACEBOOK_WEBHOOK_VERIFY_TOKEN}
       - CUSTOMER_SERVICE_URL=http://customer-service:3001
       - MESSAGE_SERVICE_URL=http://message-service:3002
+      - MATTERMOST_URL=http://mattermost:8065
+      - MATTERMOST_USERNAME=${MATTERMOST_USERNAME:-admin}
+      - MATTERMOST_PASSWORD=${MATTERMOST_PASSWORD}
     depends_on:
       facebook-db:
         condition: service_healthy

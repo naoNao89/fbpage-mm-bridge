@@ -68,30 +68,25 @@ impl MattermostClient {
             .await
             .context("Failed to send login request to Mattermost")?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
+        let status = resp.status();
+        let token_from_header = resp.headers().get("Token").and_then(|h| h.to_str().ok()).map(String::from);
+        let body_text = resp.text().await.unwrap_or_default();
+
+        if !status.is_success() {
             return Err(anyhow::anyhow!(
-                "Mattermost login failed with {status}: {body}"
+                "Mattermost login failed with {status}: {body_text}"
             ));
         }
 
-        // Token is returned in the header "Token"
-        if let Some(token_header) = resp.headers().get("Token") {
-            if let Ok(token_str) = token_header.to_str() {
-                let mut tok = self.token.lock().expect("token lock poisoned");
-                *tok = Some(token_str.to_string());
-            }
-        }
+        let token_opt = token_from_header.or_else(|| {
+            serde_json::from_str::<serde_json::Value>(&body_text)
+                .ok()
+                .and_then(|j| j.get("token").and_then(|v| v.as_str()).map(String::from))
+        });
 
-        // If not in header, try to read body as JSON with token field (fallback)
-        if self.token.lock().unwrap().is_none() {
-            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                if let Some(t) = json.get("token").and_then(|v| v.as_str()) {
-                    let mut tok = self.token.lock().expect("token lock poisoned");
-                    *tok = Some(t.to_string());
-                }
-            }
+        if let Some(t) = token_opt {
+            let mut tok = self.token.lock().expect("token lock poisoned");
+            *tok = Some(t);
         }
 
         Ok(())
