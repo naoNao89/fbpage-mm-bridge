@@ -308,6 +308,11 @@ jobs:
           BUILD_MESSAGE: ${{ needs.build-message.result }}
           BUILD_FACEBOOK: ${{ needs.build-facebook.result }}
           BUILD_MM_BRIDGE_BOT: ${{ needs.build-mm-bridge-bot.result }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
+          FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
+          FACEBOOK_APP_ID: ${{ secrets.FACEBOOK_APP_ID }}
+          FACEBOOK_APP_SECRET: ${{ secrets.FACEBOOK_APP_SECRET }}
         run: |
           cat << ENVOF | ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cat > /tmp/deploy-env.sh"
           export MM_DOMAIN='$MM_DOMAIN'
@@ -329,6 +334,11 @@ jobs:
           export BUILD_MESSAGE='$BUILD_MESSAGE'
           export BUILD_FACEBOOK='$BUILD_FACEBOOK'
           export BUILD_MM_BRIDGE_BOT='$BUILD_MM_BRIDGE_BOT'
+          export POSTGRES_PASSWORD='$POSTGRES_PASSWORD'
+          export FACEBOOK_PAGE_ID='$FACEBOOK_PAGE_ID'
+          export FACEBOOK_PAGE_ACCESS_TOKEN='$FACEBOOK_PAGE_ACCESS_TOKEN'
+          export FACEBOOK_APP_ID='$FACEBOOK_APP_ID'
+          export FACEBOOK_APP_SECRET='$FACEBOOK_APP_SECRET'
           ENVOF
 
       - name: Deploy via SSH
@@ -379,9 +389,38 @@ jobs:
               fi
             fi
 
-            if [ ! -f .env ]; then
-              cp .env.example .env || true
-            fi
+            cat > .env << ENDOFFILE
+DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-postgres}@facebook-db:5432/facebook_graph
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+CUSTOMER_SERVICE_URL=http://customer-service:3001
+MESSAGE_SERVICE_URL=http://message-service:3002
+MATTERMOST_URL=http://mattermost:8065
+MATTERMOST_USERNAME=${MM_ADMIN_USERNAME:-admin}
+MATTERMOST_PASSWORD=${MATTERMOST_PASSWORD}
+FACEBOOK_PAGE_ID=${FACEBOOK_PAGE_ID}
+FACEBOOK_PAGE_ACCESS_TOKEN=${FACEBOOK_PAGE_ACCESS_TOKEN}
+FACEBOOK_APP_ID=${FACEBOOK_APP_ID}
+FACEBOOK_APP_SECRET=${FACEBOOK_APP_SECRET}
+FACEBOOK_WEBHOOK_VERIFY_TOKEN=${FACEBOOK_WEBHOOK_VERIFY_TOKEN}
+MM_SITE_URL=${MM_SITE_URL}
+MM_DOMAIN=${MM_DOMAIN}
+MM_ADMIN_EMAIL=${MM_ADMIN_EMAIL}
+MM_ADMIN_USERNAME=${MM_ADMIN_USERNAME}
+MM_ADMIN_PASSWORD=${MM_ADMIN_PASSWORD}
+MM_BOT_USERNAME=${MM_BOT_USERNAME}
+MM_BOT_DISPLAY_NAME=${MM_BOT_DISPLAY_NAME}
+MM_BOT_DESCRIPTION=${MM_BOT_DESCRIPTION}
+LOG_LEVEL=info
+BIND_ADDRESS=0.0.0.0:3003
+NGINX_HTTP_PORT=80
+NGINX_HTTPS_PORT=443
+NGINX_BIND_IP=0.0.0.0
+MATTERMOST_PORT=8065
+CUSTOMER_SERVICE_PORT=3001
+MESSAGE_SERVICE_PORT=3002
+FACEBOOK_GRAPH_SERVICE_PORT=3003
+ENDOFFILE
 
             # Copy SSL certificates from Let's Encrypt (where certbot stores them) to repo dir
             mkdir -p certs
