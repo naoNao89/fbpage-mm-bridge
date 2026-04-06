@@ -11,6 +11,10 @@ on:
       - '.github/workflows/deploy-mattermost.yml'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   packages: write
@@ -20,11 +24,57 @@ env:
   GHCR_OWNER: ${{ github.repository_owner }}
 
 jobs:
-  build:
+  # ─── Detect which paths changed ───────────────────────────────────────
+  detect-changes:
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     outputs:
-      image_refs: ${{ steps.meta.outputs.tags }}
+      customer: ${{ steps.filter.outputs.customer-service }}
+      message: ${{ steps.filter.outputs.message-service }}
+      facebook: ${{ steps.filter.outputs.facebook-graph-service }}
+      nginx: ${{ steps.filter.outputs.nginx }}
+      shared: ${{ steps.filter.outputs.shared }}
+      # Convenience: true if ANY Rust service needs rebuilding
+      any-service: ${{ steps.filter.outputs.any-service }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            customer-service:
+              - 'services/customer-service/**'
+            message-service:
+              - 'services/message-service/**'
+            facebook-graph-service:
+              - 'services/facebook-graph-service/**'
+            nginx:
+              - 'nginx/**'
+              - 'Dockerfile.nginx'
+            shared:
+              - 'src/**'
+              - 'utils/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'docker-compose.yml'
+              - 'docker-bake.hcl'
+            any-service:
+              - 'services/customer-service/**'
+              - 'services/message-service/**'
+              - 'services/facebook-graph-service/**'
+              - 'src/**'
+              - 'utils/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+
+  # ─── Build Customer Service (conditional) ─────────────────────────────
+  build-customer:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.customer == 'true' || needs.detect-changes.outputs.shared == 'true'
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,13 +106,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Extract metadata for Docker images
-        id: meta
-        run: |
-          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/customer-service:latest" >> $GITHUB_OUTPUT
-          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/message-service:latest" >> $GITHUB_OUTPUT
-          echo "tags=ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/facebook-graph-service:latest" >> $GITHUB_OUTPUT
-
       - name: Build and push Customer Service
         uses: docker/build-push-action@v5
         with:
@@ -74,6 +117,42 @@ jobs:
           cache-to: type=gha,mode=max
           platforms: linux/amd64
 
+  # ─── Build Message Service (conditional) ──────────────────────────────
+  build-message:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.message == 'true' || needs.detect-changes.outputs.shared == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set lowercase owner
+        run: |
+          echo "GHCR_OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
       - name: Build and push Message Service
         uses: docker/build-push-action@v5
         with:
@@ -84,6 +163,42 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
+
+  # ─── Build Facebook Graph Service (conditional) ───────────────────────
+  build-facebook:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.facebook == 'true' || needs.detect-changes.outputs.shared == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set lowercase owner
+        run: |
+          echo "GHCR_OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Build and push Facebook Graph Service
         uses: docker/build-push-action@v5
@@ -97,9 +212,16 @@ jobs:
           platforms: linux/amd64
 
   deploy:
+    needs: [detect-changes, build-customer, build-message, build-facebook]
+    if: |
+      always() &&
+      needs.detect-changes.result == 'success' &&
+      (needs.detect-changes.outputs.customer == 'true' ||
+       needs.detect-changes.outputs.message == 'true' ||
+       needs.detect-changes.outputs.facebook == 'true' ||
+       needs.detect-changes.outputs.nginx == 'true' ||
+       needs.detect-changes.outputs.shared == 'true')
     runs-on: ubuntu-latest
-    needs: [build]
-    if: always()
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -131,6 +253,9 @@ jobs:
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          BUILD_CUSTOMER: ${{ needs.build-customer.result }}
+          BUILD_MESSAGE: ${{ needs.build-message.result }}
+          BUILD_FACEBOOK: ${{ needs.build-facebook.result }}
         run: |
           cat << ENVOF | ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cat > /tmp/deploy-env.sh"
           export MM_DOMAIN='$MM_DOMAIN'
@@ -147,6 +272,9 @@ jobs:
           export REPO='$REPO'
           export BRANCH='$BRANCH'
           export IMAGE_TAG='$IMAGE_TAG'
+          export BUILD_CUSTOMER='$BUILD_CUSTOMER'
+          export BUILD_MESSAGE='$BUILD_MESSAGE'
+          export BUILD_FACEBOOK='$BUILD_FACEBOOK'
           ENVOF
 
       - name: Deploy via SSH
@@ -213,13 +341,44 @@ jobs:
               exit 1
             fi
 
-            # Pull pre-built images from GHCR instead of building locally
-            export GHCR_OWNER="${{ env.GHCR_OWNER }}"
-            docker compose -f docker-compose.yml pull
+            export GHCR_OWNER="${GHCR_OWNER:-naonao89}"
 
-            # Stop containers from any previous deployment
-            docker rm -f customer-service message-service facebook-graph-service fbpage-mm-bridge customer-service-db message-service-db facebook-graph-service-db fbpage-mm-bridge-db 2>/dev/null || true
-            docker compose down --remove-orphans 2>/dev/null || true
+            # ─── Smart pull: only pull services that were NOT rebuilt ────
+            # Services that were rebuilt already have the latest image pushed to GHCR.
+            # Services that were skipped need their existing GHCR image pulled.
+            PULL_SERVICES=()
+
+            if [ "$BUILD_CUSTOMER" != "success" ]; then
+              PULL_SERVICES+=("customer-service")
+              echo "[SKIP BUILD] customer-service unchanged — will pull existing GHCR image"
+            else
+              echo "[BUILD] customer-service was rebuilt — using pushed image"
+            fi
+
+            if [ "$BUILD_MESSAGE" != "success" ]; then
+              PULL_SERVICES+=("message-service")
+              echo "[SKIP BUILD] message-service unchanged — will pull existing GHCR image"
+            else
+              echo "[BUILD] message-service was rebuilt — using pushed image"
+            fi
+
+            if [ "$BUILD_FACEBOOK" != "success" ]; then
+              PULL_SERVICES+=("facebook-graph-service")
+              echo "[SKIP BUILD] facebook-graph-service unchanged — will pull existing GHCR image"
+            else
+              echo "[BUILD] facebook-graph-service was rebuilt — using pushed image"
+            fi
+
+            if [ ${#PULL_SERVICES[@]} -gt 0 ]; then
+              echo "Pulling unchanged services: ${PULL_SERVICES[*]}"
+              for svc in "${PULL_SERVICES[@]}"; do
+                docker compose pull "$svc" || echo "Warning: failed to pull $svc"
+              done
+            else
+              echo "All services were rebuilt — no pull needed"
+            fi
+
+            # Bring up all services (changed services use pushed images, unchanged use pulled)
             docker compose up -d
 
             echo "=== DEBUG: nginx container ==="
