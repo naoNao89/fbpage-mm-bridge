@@ -439,10 +439,12 @@ jobs:
               echo "All services were rebuilt — no pull needed"
             fi
 
-            if docker ps --format '{{.Names}}' | grep -q '^mattermost$'; then
-              docker kill mattermost 2>/dev/null || true
-              docker rm -f mattermost 2>/dev/null || true
-            fi
+            for c in mattermost customer-service message-service facebook-graph-service mm-bridge-bot nginx; do
+              if docker ps --format '{{.Names}}' | grep -q "^$c$"; then
+                docker kill "$c" 2>/dev/null || true
+                docker rm -f "$c" 2>/dev/null || true
+              fi
+            done
             docker compose down --remove-orphans 2>/dev/null || true
             docker compose up -d
 
