@@ -449,8 +449,8 @@ jobs:
             docker compose up -d
 
             echo "=== DEBUG: nginx container ==="
-            docker ps -a --filter name=nginx --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
-            docker logs nginx 2>&1 | tail -20
+            docker compose ps nginx
+            docker compose logs nginx 2>&1 | tail -20
             ss -tlnp 'sport = :80' 2>/dev/null || echo "Port 80 not listening"
             ss -tlnp 'sport = :443' 2>/dev/null || echo "Port 443 not listening"
 
@@ -482,13 +482,20 @@ jobs:
             HEALTH_CHECK_FAILED=false
 
             for service in customer-service message-service facebook-graph-service mm-bridge-bot; do
-              CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$service" 2>/dev/null || echo "no-healthcheck")
+              CONTAINER_ID=$(docker compose ps -q "$service")
+              if [ -z "$CONTAINER_ID" ]; then
+                echo "[FAIL] $service: NOT running"
+                docker compose logs --tail=30 "$service"
+                HEALTH_CHECK_FAILED=true
+                continue
+              fi
+              CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_ID" 2>/dev/null || echo "no-healthcheck")
               if [ "$CONTAINER_STATUS" = "healthy" ]; then
                 echo "[PASS] $service: healthy"
               elif [ "$CONTAINER_STATUS" = "starting" ]; then
                 echo "[WAIT] $service: still starting (waiting...)"
                 sleep 10
-                CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$service" 2>/dev/null || echo "no-healthcheck")
+                CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_ID" 2>/dev/null || echo "no-healthcheck")
                 if [ "$CONTAINER_STATUS" = "healthy" ]; then
                   echo "[PASS] $service: healthy"
                 else
@@ -501,7 +508,6 @@ jobs:
                 docker compose logs --tail=30 "$service"
                 HEALTH_CHECK_FAILED=true
               else
-                # Fallback: check if process is running
                 if docker compose ps "$service" | grep -q "Up"; then
                   echo "[PASS] $service: running (no healthcheck available)"
                 else

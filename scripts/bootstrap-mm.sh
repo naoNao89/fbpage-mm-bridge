@@ -12,14 +12,18 @@
 
 set -euo pipefail
 
-MM_CONTAINER="${MM_CONTAINER:-mattermost}"
+MM_CONTAINER="$(docker compose ps -q mattermost 2>/dev/null | head -1)"
+if [ -z "$MM_CONTAINER" ]; then
+  echo "ERROR: Could not find mattermost container"
+  exit 1
+fi
 MMCTL="docker exec -i $MM_CONTAINER mmctl"
 
 # Wait for Mattermost to be ready
 echo "Waiting for Mattermost to be ready..."
 for i in $(seq 1 60); do
   # Check container health status first (lighter than exec)
-  HEALTH=$(docker inspect --format='{{.State.Health.Status}}' "$MM_CONTAINER" 2>/dev/null || echo "unknown")
+  HEALTH=$(docker inspect --format='{{.State.Health.Status}}' "$MM_CONTAINER" 2>/dev/null | head -1 || echo "unknown")
   if [ "$HEALTH" = "healthy" ]; then
     echo "Mattermost is ready (attempt $i)"
     break
