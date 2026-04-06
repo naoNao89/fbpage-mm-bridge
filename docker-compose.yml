@@ -21,8 +21,8 @@ services:
       test: ["CMD-SHELL", "curl -f http://localhost:3001/health || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 60s
+      retries: 10
+      start_period: 120s
     networks:
       - fbpage-mm-network
 
@@ -51,8 +51,8 @@ services:
       test: ["CMD-SHELL", "curl -f http://localhost:3002/health || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 60s
+      retries: 10
+      start_period: 120s
     networks:
       - fbpage-mm-network
 
@@ -91,8 +91,8 @@ services:
       test: ["CMD-SHELL", "curl -f http://localhost:3003/health || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 60s
+      retries: 10
+      start_period: 120s
     networks:
       - fbpage-mm-network
 

@@ -474,6 +474,11 @@ jobs:
             echo "Waiting additional 60s for services to initialize..."
             sleep 60
 
+            echo "=== DEBUG: service containers ==="
+            docker compose logs customer-service 2>&1 | tail -30
+            docker compose logs message-service 2>&1 | tail -30
+            docker compose logs facebook-graph-service 2>&1 | tail -30
+
             echo "=== DEBUG: nginx container ==="
             docker compose ps nginx
             docker compose logs nginx 2>&1 | tail -20
