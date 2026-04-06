@@ -439,6 +439,14 @@ jobs:
               echo "All services were rebuilt — no pull needed"
             fi
 
+            # Remove stale containers that conflict with new ones (db containers may persist across runs)
+            for db_svc in mattermost-db message-service-db customer-service-db facebook-graph-service-db; do
+              if docker compose ps "$db_svc" &>/dev/null; then
+                echo "Removing stale container: $db_svc"
+                docker compose rm -sf "$db_svc" || true
+              fi
+            done
+
             # Bring up all services (changed services use pushed images, unchanged use pulled)
             docker compose up -d
 
