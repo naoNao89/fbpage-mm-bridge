@@ -11,6 +11,10 @@ on:
       - '.github/workflows/deploy-mattermost.yml'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   packages: write
@@ -57,7 +61,6 @@ jobs:
               - 'Cargo.lock'
               - 'docker-compose.yml'
               - 'docker-bake.hcl'
-              - '.github/workflows/**'
             any-service:
               - 'services/customer-service/**'
               - 'services/message-service/**'
@@ -210,7 +213,14 @@ jobs:
 
   deploy:
     needs: [detect-changes, build-customer, build-message, build-facebook]
-    if: always() && needs.detect-changes.result == 'success'
+    if: |
+      always() &&
+      needs.detect-changes.result == 'success' &&
+      (needs.detect-changes.outputs.customer == 'true' ||
+       needs.detect-changes.outputs.message == 'true' ||
+       needs.detect-changes.outputs.facebook == 'true' ||
+       needs.detect-changes.outputs.nginx == 'true' ||
+       needs.detect-changes.outputs.shared == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
