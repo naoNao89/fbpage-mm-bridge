@@ -28,7 +28,8 @@ use sqlx::PgPool;
 use crate::config::Config;
 use crate::handlers::{
     create_message, get_message, get_messages_by_conversation, get_messages_by_customer,
-    get_unsynced_messages, health_check, mark_message_sync_failed, mark_message_synced,
+    get_unsynced_messages, health_check, lookup_customer_by_conversation,
+    mark_message_sync_failed, mark_message_synced,
 };
 use crate::services::customer_client::CustomerServiceClient;
 
@@ -61,6 +62,10 @@ pub fn create_app(state: AppState) -> Router {
         .route(
             "/api/messages/conversation/:conversation_id",
             get(get_messages_by_conversation),
+        )
+        .route(
+            "/api/messages/conversation/:conversation_id/customer",
+            get(lookup_customer_by_conversation),
         )
         .with_state(state)
 }

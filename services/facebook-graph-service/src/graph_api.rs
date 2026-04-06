@@ -500,6 +500,120 @@ pub struct TokenExchangeResponse {
     pub expires_in: i64,
 }
 
+// Send Message (Reply to Facebook)
+
+/// Send a text message to a Facebook user via the Messenger Send API.
+///
+/// `recipient_psid` is the Page-Scoped User ID (the sender.id from webhook events).
+/// Returns the message ID on success.
+pub async fn send_message_to_facebook(
+    access_token: &str,
+    recipient_psid: &str,
+    text: &str,
+) -> Result<String> {
+    let client = Client::new();
+    let url = format!("{GRAPH_API_BASE}/me/messages?access_token={access_token}");
+
+    let payload = serde_json::json!({
+        "recipient": {
+            "id": recipient_psid
+        },
+        "message": {
+            "text": text
+        }
+    });
+
+    let response = client
+        .post(&url)
+        .json(&payload)
+        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .send()
+        .await
+        .context("Failed to send message to Facebook")?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await?;
+        return Err(anyhow::anyhow!(
+            "Facebook Send API failed with {status}: {error_text}"
+        ));
+    }
+
+    let result: SendMessageResponse = response
+        .json()
+        .await
+        .context("Failed to parse Send API response")?;
+
+    info!(
+        "Message sent to Facebook user {}: mid={}",
+        recipient_psid, result.message_id
+    );
+
+    Ok(result.message_id)
+}
+
+/// Send an image attachment to a Facebook user via the Messenger Send API.
+///
+/// `image_url` must be a publicly accessible URL.
+pub async fn send_image_to_facebook(
+    access_token: &str,
+    recipient_psid: &str,
+    image_url: &str,
+) -> Result<String> {
+    let client = Client::new();
+    let url = format!("{GRAPH_API_BASE}/me/messages?access_token={access_token}");
+
+    let payload = serde_json::json!({
+        "recipient": {
+            "id": recipient_psid
+        },
+        "message": {
+            "attachment": {
+                "type": "image",
+                "payload": {
+                    "url": image_url
+                }
+            }
+        }
+    });
+
+    let response = client
+        .post(&url)
+        .json(&payload)
+        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .send()
+        .await
+        .context("Failed to send image to Facebook")?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await?;
+        return Err(anyhow::anyhow!(
+            "Facebook Send API (image) failed with {status}: {error_text}"
+        ));
+    }
+
+    let result: SendMessageResponse = response
+        .json()
+        .await
+        .context("Failed to parse Send API image response")?;
+
+    info!(
+        "Image sent to Facebook user {}: mid={}",
+        recipient_psid, result.message_id
+    );
+
+    Ok(result.message_id)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SendMessageResponse {
+    #[serde(rename = "recipient_id")]
+    pub recipient_id: String,
+    #[serde(rename = "message_id")]
+    pub message_id: String,
+}
+
 // Tests
 
 #[cfg(test)]

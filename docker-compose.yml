@@ -96,6 +96,28 @@ services:
     networks:
       - fbpage-mm-network
 
+  # MM Bridge Bot - Listens to Mattermost and replies back to Facebook
+  mm-bridge-bot:
+    build:
+      context: .
+      dockerfile: services/mm-bridge-bot/Dockerfile
+    container_name: mm-bridge-bot
+    restart: unless-stopped
+    environment:
+      - MATTERMOST_URL=http://mattermost:8065
+      - MATTERMOST_USERNAME=${MATTERMOST_USERNAME:-admin}
+      - MATTERMOST_PASSWORD=${MATTERMOST_PASSWORD}
+      - FACEBOOK_PAGE_ACCESS_TOKEN=${FACEBOOK_PAGE_ACCESS_TOKEN}
+      - CUSTOMER_SERVICE_URL=http://customer-service:3001
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    depends_on:
+      mattermost:
+        condition: service_healthy
+      customer-service:
+        condition: service_healthy
+    networks:
+      - fbpage-mm-network
+
   # Nginx Reverse Proxy
   nginx:
     image: nginx:1.25-alpine

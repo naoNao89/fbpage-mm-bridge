@@ -32,9 +32,9 @@ jobs:
       customer: ${{ steps.filter.outputs.customer-service }}
       message: ${{ steps.filter.outputs.message-service }}
       facebook: ${{ steps.filter.outputs.facebook-graph-service }}
+      mm-bridge-bot: ${{ steps.filter.outputs.mm-bridge-bot }}
       nginx: ${{ steps.filter.outputs.nginx }}
       shared: ${{ steps.filter.outputs.shared }}
-      # Convenience: true if ANY Rust service needs rebuilding
       any-service: ${{ steps.filter.outputs.any-service }}
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +51,8 @@ jobs:
               - 'services/message-service/**'
             facebook-graph-service:
               - 'services/facebook-graph-service/**'
+            mm-bridge-bot:
+              - 'services/mm-bridge-bot/**'
             nginx:
               - 'nginx/**'
               - 'Dockerfile.nginx'
@@ -65,6 +67,7 @@ jobs:
               - 'services/customer-service/**'
               - 'services/message-service/**'
               - 'services/facebook-graph-service/**'
+              - 'services/mm-bridge-bot/**'
               - 'src/**'
               - 'utils/**'
               - 'Cargo.toml'
@@ -211,14 +214,61 @@ jobs:
           cache-to: type=gha,mode=max
           platforms: linux/amd64
 
+  build-mm-bridge-bot:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.mm-bridge-bot == 'true' || needs.detect-changes.outputs.shared == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set lowercase owner
+        run: |
+          echo "GHCR_OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build and push mm-bridge-bot
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/mm-bridge-bot/Dockerfile
+          push: true
+          tags: ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/mm-bridge-bot:${{ env.IMAGE_TAG }},ghcr.io/${{ env.GHCR_OWNER }}/fbpage-mm-bridge/mm-bridge-bot:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
   deploy:
-    needs: [detect-changes, build-customer, build-message, build-facebook]
+    needs: [detect-changes, build-customer, build-message, build-facebook, build-mm-bridge-bot]
     if: |
       always() &&
       needs.detect-changes.result == 'success' &&
       (needs.detect-changes.outputs.customer == 'true' ||
        needs.detect-changes.outputs.message == 'true' ||
        needs.detect-changes.outputs.facebook == 'true' ||
+       needs.detect-changes.outputs.mm-bridge-bot == 'true' ||
        needs.detect-changes.outputs.nginx == 'true' ||
        needs.detect-changes.outputs.shared == 'true')
     runs-on: ubuntu-latest
@@ -256,6 +306,7 @@ jobs:
           BUILD_CUSTOMER: ${{ needs.build-customer.result }}
           BUILD_MESSAGE: ${{ needs.build-message.result }}
           BUILD_FACEBOOK: ${{ needs.build-facebook.result }}
+          BUILD_MM_BRIDGE_BOT: ${{ needs.build-mm-bridge-bot.result }}
         run: |
           cat << ENVOF | ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cat > /tmp/deploy-env.sh"
           export MM_DOMAIN='$MM_DOMAIN'
@@ -275,6 +326,7 @@ jobs:
           export BUILD_CUSTOMER='$BUILD_CUSTOMER'
           export BUILD_MESSAGE='$BUILD_MESSAGE'
           export BUILD_FACEBOOK='$BUILD_FACEBOOK'
+          export BUILD_MM_BRIDGE_BOT='$BUILD_MM_BRIDGE_BOT'
           ENVOF
 
       - name: Deploy via SSH
@@ -369,6 +421,13 @@ jobs:
               echo "[BUILD] facebook-graph-service was rebuilt — using pushed image"
             fi
 
+            if [ "$BUILD_MM_BRIDGE_BOT" != "success" ]; then
+              PULL_SERVICES+=("mm-bridge-bot")
+              echo "[SKIP BUILD] mm-bridge-bot unchanged — will pull existing GHCR image"
+            else
+              echo "[BUILD] mm-bridge-bot was rebuilt — using pushed image"
+            fi
+
             if [ ${#PULL_SERVICES[@]} -gt 0 ]; then
               echo "Pulling unchanged services: ${PULL_SERVICES[*]}"
               for svc in "${PULL_SERVICES[@]}"; do
@@ -414,7 +473,7 @@ jobs:
 
             HEALTH_CHECK_FAILED=false
 
-            for service in customer-service message-service facebook-graph-service; do
+            for service in customer-service message-service facebook-graph-service mm-bridge-bot; do
               CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$service" 2>/dev/null || echo "no-healthcheck")
               if [ "$CONTAINER_STATUS" = "healthy" ]; then
                 echo "[PASS] $service: healthy"

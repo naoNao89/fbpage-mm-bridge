@@ -281,3 +281,35 @@ pub async fn mark_message_sync_failed(
         }
     }
 }
+
+/// Lookup customer UUID by conversation ID (for bridge bot).
+pub async fn lookup_customer_by_conversation(
+    State(state): State<AppState>,
+    axum::extract::Path(conversation_id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    match db::get_customer_id_by_conversation(&state.pool, &conversation_id).await {
+        Ok(Some(customer_id)) => {
+            (StatusCode::OK, Json(serde_json::json!({ "customer_id": customer_id })))
+                .into_response()
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "No messages found for conversation",
+                "conversation_id": conversation_id
+            })),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!("Failed to lookup customer for conv {}: {}", conversation_id, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Database error",
+                    "details": e.to_string()
+                })),
+            )
+                .into_response()
+        }
+    }
+}

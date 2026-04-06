@@ -281,10 +281,122 @@ impl MattermostClient {
 
     /// Get the root post_id for a conversation if already posted as root
     pub async fn get_root_id(&self, conversation_id: &str) -> Result<Option<String>> {
-        // We store root_ids under the conversation_id key in root_cache
         let guard = self.root_cache.lock().unwrap();
         Ok(guard.get(conversation_id).cloned())
     }
+
+    /// Fetch all posts in a channel created after the given Unix millisecond timestamp.
+    /// Returns posts sorted by creation time (oldest first).
+    pub async fn get_posts_since(
+        &self,
+        channel_id: &str,
+        since: i64,
+    ) -> Result<Vec<MattermostPost>> {
+        self.ensure_token()
+            .await
+            .context("Failed to ensure token for get_posts_since")?;
+
+        let url = format!(
+            "{}/api/v4/channels/{}/posts?since={}&per_page=60",
+            self.base_url, channel_id, since
+        );
+
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to fetch posts from Mattermost")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "Mattermost posts fetch failed {status}: {body}"
+            ));
+        }
+
+        let posts_response: PostsResponse = resp
+            .json()
+            .await
+            .context("Failed to parse Mattermost posts response")?;
+
+        let mut posts: Vec<MattermostPost> = posts_response.order
+            .iter()
+            .filter_map(|id| posts_response.posts.get(id))
+            .cloned()
+            .collect();
+
+        posts.sort_by_key(|p| p.create_at);
+        Ok(posts)
+    }
+
+    /// List all channels for a team, filtered by name prefix.
+    /// Used by the bot to discover channels that correspond to FB conversations.
+    pub async fn list_channels_by_prefix(
+        &self,
+        team_id: &str,
+        prefix: &str,
+    ) -> Result<Vec<ChannelInfo>> {
+        self.ensure_token()
+            .await
+            .context("Failed to ensure token for list_channels_by_prefix")?;
+
+        let url = format!(
+            "{}/api/v4/teams/{}/channels?per_page=200",
+            self.base_url, team_id
+        );
+
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to list Mattermost channels")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "Mattermost channel list failed {status}: {body}"
+            ));
+        }
+
+        let channels: Vec<ChannelInfo> = resp
+            .json()
+            .await
+            .context("Failed to parse Mattermost channel list")?;
+
+        Ok(channels
+            .into_iter()
+            .filter(|c| c.name.starts_with(prefix))
+            .collect())
+    }
 }
 
-// Re-export anyhow for internal error construction if needed
+// Data types for polling and channel listing
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MattermostPost {
+    pub id: String,
+    pub user_id: String,
+    pub channel_id: String,
+    pub message: String,
+    pub root_id: String,
+    #[serde(default)]
+    pub create_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct PostsResponse {
+    pub order: Vec<String>,
+    pub posts: HashMap<String, MattermostPost>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChannelInfo {
+    pub id: String,
+    pub name: String,
+    pub display_name: String,
+    pub team_id: String,
+}

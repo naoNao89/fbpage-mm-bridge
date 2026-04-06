@@ -127,6 +127,22 @@ pub async fn get_unsynced_messages(pool: &PgPool, limit: i64) -> Result<Vec<Mess
     Ok(messages)
 }
 
+/// Get the customer_id (UUID) for the first message in a conversation.
+/// Used by the bridge bot to resolve conversation_id → customer UUID for API calls.
+pub async fn get_customer_id_by_conversation(
+    pool: &PgPool,
+    conversation_id: &str,
+) -> Result<Option<Uuid>> {
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        r#"SELECT customer_id FROM messages WHERE conversation_id = $1 LIMIT 1"#,
+    )
+    .bind(conversation_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(|(id,)| id))
+}
+
 /// Mark message as synced to Mattermost
 pub async fn mark_message_synced(
     pool: &PgPool,

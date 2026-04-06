@@ -3,6 +3,7 @@ members = [
     "services/customer-service",
     "services/message-service",
     "services/facebook-graph-service",
+    "services/mm-bridge-bot",
 ]
 resolver = "3"
 

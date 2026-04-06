@@ -1,0 +1,18 @@
+[package]
+name = "mm-bridge-bot"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Mattermost bridge bot - listens to MM and replies to Facebook users"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+dotenvy = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+reqwest = { workspace = true }
+uuid = { workspace = true }
