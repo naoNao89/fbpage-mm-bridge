@@ -439,6 +439,10 @@ jobs:
               echo "All services were rebuilt — no pull needed"
             fi
 
+            if docker ps --format '{{.Names}}' | grep -q '^mattermost$'; then
+              docker kill mattermost 2>/dev/null || true
+              docker rm -f mattermost 2>/dev/null || true
+            fi
             docker compose down --remove-orphans 2>/dev/null || true
             docker compose up -d
 
