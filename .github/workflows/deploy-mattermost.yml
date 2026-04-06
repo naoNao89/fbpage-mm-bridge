@@ -389,17 +389,7 @@ jobs:
               fi
             fi
 
-            while IFS='=' read -r key val; do
-              case "$key" in
-                POSTGRES_PASSWORD) sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${val}|" .env ;;
-                MATTERMOST_PASSWORD) sed -i "s|^MATTERMOST_PASSWORD=.*|MATTERMOST_PASSWORD=${val}|" .env ;;
-                MATTERMOST_USERNAME) sed -i "s|^MATTERMOST_USERNAME=.*|MATTERMOST_USERNAME=${val}|" .env ;;
-                FACEBOOK_PAGE_ACCESS_TOKEN) sed -i "s|^FACEBOOK_PAGE_ACCESS_TOKEN=.*|FACEBOOK_PAGE_ACCESS_TOKEN=${val}|" .env ;;
-                FACEBOOK_APP_ID) sed -i "s|^FACEBOOK_APP_ID=.*|FACEBOOK_APP_ID=${val}|" .env ;;
-                FACEBOOK_APP_SECRET) sed -i "s|^FACEBOOK_APP_SECRET=.*|FACEBOOK_APP_SECRET=${val}|" .env ;;
-                FACEBOOK_PAGE_ID) sed -i "s|^FACEBOOK_PAGE_ID=.*|FACEBOOK_PAGE_ID=${val}|" .env ;;
-              esac
-            done < <(env | grep -E '^(POSTGRES_PASSWORD|MATTERMOST_PASSWORD|MATTERMOST_USERNAME|FACEBOOK_PAGE_ACCESS_TOKEN|FACEBOOK_APP_ID|FACEBOOK_APP_SECRET|FACEBOOK_PAGE_ID)=')
+            python3 scripts/update-env.py
 
             # Copy SSL certificates from Let's Encrypt (where certbot stores them) to repo dir
             mkdir -p certs
