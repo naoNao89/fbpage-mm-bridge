@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::Deserialize;
-use tracing::{info, warn};
 
 /// Lightweight representations for API responses
 #[derive(Debug, Deserialize)]
@@ -78,30 +77,21 @@ impl MattermostClient {
         }
 
         // Token is returned in the header "Token"
-        info!("Login response status: {}", resp.status());
-        info!("Login response headers: {:?}", resp.headers());
         if let Some(token_header) = resp.headers().get("Token") {
             if let Ok(token_str) = token_header.to_str() {
                 let mut tok = self.token.lock().expect("token lock poisoned");
                 *tok = Some(token_str.to_string());
-                info!("Token extracted from header: {}", token_str);
             }
         }
 
         // If not in header, try to read body as JSON with token field (fallback)
         if self.token.lock().unwrap().is_none() {
             if let Ok(json) = resp.json::<serde_json::Value>().await {
-                info!("Login response body: {:?}", json);
                 if let Some(t) = json.get("token").and_then(|v| v.as_str()) {
                     let mut tok = self.token.lock().expect("token lock poisoned");
                     *tok = Some(t.to_string());
-                    info!("Token extracted from body: {}", t);
                 }
             }
-        }
-
-        if self.token.lock().unwrap().is_none() {
-            anyhow::bail!("Mattermost login: no token found in response headers or body");
         }
 
         Ok(())
