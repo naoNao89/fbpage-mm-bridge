@@ -440,7 +440,7 @@ jobs:
             fi
 
             # Remove stale containers that conflict with new ones (db containers may persist across runs)
-            docker compose up -d --force-recreate
+            docker compose up -d
 
             echo "=== DEBUG: nginx container ==="
             docker ps -a --filter name=nginx --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'

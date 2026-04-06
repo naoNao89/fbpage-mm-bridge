@@ -5,7 +5,6 @@ services:
     build:
       context: .
       dockerfile: services/customer-service/Dockerfile
-    container_name: customer-service
     restart: unless-stopped
     ports:
       - "${CUSTOMER_SERVICE_PORT:-3001}:3001"
@@ -33,7 +32,6 @@ services:
     build:
       context: .
       dockerfile: services/message-service/Dockerfile
-    container_name: message-service
     restart: unless-stopped
     ports:
       - "${MESSAGE_SERVICE_PORT:-3002}:3002"
@@ -64,7 +62,6 @@ services:
     build:
       context: .
       dockerfile: services/facebook-graph-service/Dockerfile
-    container_name: facebook-graph-service
     restart: unless-stopped
     ports:
       - "${FACEBOOK_GRAPH_SERVICE_PORT:-3003}:3003"
@@ -104,7 +101,6 @@ services:
     build:
       context: .
       dockerfile: services/mm-bridge-bot/Dockerfile
-    container_name: mm-bridge-bot
     restart: unless-stopped
     environment:
       - MATTERMOST_URL=http://mattermost:8065
@@ -124,7 +120,6 @@ services:
   # Nginx Reverse Proxy
   nginx:
     image: nginx:1.25-alpine
-    container_name: nginx
     restart: unless-stopped
     ports:
       - "${NGINX_HTTP_PORT:-80}:80"
@@ -141,7 +136,6 @@ services:
   # PostgreSQL for Customer Service
   customer-db:
     image: postgres:16-alpine
-    container_name: customer-service-db
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
@@ -160,7 +154,6 @@ services:
   # PostgreSQL for Message Service
   message-db:
     image: postgres:16-alpine
-    container_name: message-service-db
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
@@ -179,7 +172,6 @@ services:
   # PostgreSQL for Facebook Graph Service
   facebook-db:
     image: postgres:16-alpine
-    container_name: facebook-graph-service-db
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
@@ -198,7 +190,6 @@ services:
   # Mattermost
   mattermost:
     image: mattermost/mattermost-team-edition:release-10
-    container_name: mattermost
     restart: unless-stopped
     ports:
       - "${MATTERMOST_PORT:-8065}:8065"
@@ -233,7 +224,6 @@ services:
   # PostgreSQL for Mattermost
   mattermost-db:
     image: postgres:16-alpine
-    container_name: mattermost-db
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
