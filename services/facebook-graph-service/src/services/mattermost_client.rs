@@ -54,7 +54,6 @@ impl MattermostClient {
     /// Login to Mattermost and cache the token
     pub async fn login(&self) -> Result<()> {
         let url = format!("{}/api/v4/users/login", self.base_url);
-        // Mattermost login uses login_id (username) and password
         let payload = serde_json::json!({
             "login_id": self.username,
             "password": self.password,
@@ -82,7 +81,7 @@ impl MattermostClient {
             serde_json::from_str::<serde_json::Value>(&body_text)
                 .ok()
                 .and_then(|j| j.get("token").and_then(|v| v.as_str()).map(String::from))
-        }).ok_or_else(|| anyhow::anyhow!("Mattermost login succeeded but no token in response header or body: {body_text}"))?;
+        }).ok_or_else(|| anyhow::anyhow!("Mattermost login succeeded but no token in response header or body"))?;
 
         let mut tok = self.token.lock().expect("token lock poisoned");
         *tok = Some(token);
@@ -99,27 +98,35 @@ impl MattermostClient {
         Ok(())
     }
 
-    /// Retrieve the first team ID for the Mattermost instance
-    pub async fn get_team_id(&self) -> Result<String> {
-        if let Err(e) = self.ensure_token().await {
-            tracing::error!("Mattermost ensure_token failed: {e}");
-            return Err(e).context("Failed to ensure token for get_team_id");
+    /// Get authorization header value, logging in if needed
+    async fn get_auth_header(&self) -> Result<String> {
+        let needs_login = self.token.lock().expect("token lock poisoned").is_none();
+        if needs_login {
+            self.login().await?;
         }
+        let token = self.token.lock().expect("token lock poisoned").clone();
+        token.ok_or_else(|| anyhow::anyhow!("No token after login"))
+    }
+
+    pub async fn get_team_id(&self) -> Result<String> {
+        let auth = self.get_auth_header().await?;
 
         let url = format!("{}/api/v4/teams", self.base_url);
         let resp = self
             .client
             .get(&url)
+            .header("Authorization", format!("Bearer {}", auth))
             .send()
             .await
             .context("Failed to fetch teams from Mattermost")?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
+        let status = resp.status();
+        if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            tracing::error!("Mattermost get_teams failed: {status} {body}");
             return Err(anyhow::anyhow!(
-                "Mattermost get_teams failed with {status}: {body}"
+                "Mattermost get_teams failed with {}: {}",
+                status,
+                body
             ));
         }
 
@@ -152,26 +159,32 @@ impl MattermostClient {
             return Ok(cid);
         }
 
-        // Try to fetch by channel name (normalize name)
+        let auth = self.get_auth_header().await?;
+
+        // Try to fetch by channel name (requires team_id in path per Mattermost API)
         let name = conversation_id.to_lowercase();
-        let url_name = format!("{}/api/v4/channels/name/{name}", self.base_url);
+        let url_name = format!("{}/api/v4/teams/{}/channels/name/{}", self.base_url, team_id, name);
         let resp = self
             .client
             .get(&url_name)
+            .header("Authorization", format!("Bearer {}", auth))
             .send()
             .await
-            .context("Failed to query channel by name");
-        if let Ok(r) = resp {
-            if r.status().is_success() {
-                let ch: ChannelResponse =
-                    r.json().await.context("Failed to parse channel response")?;
-                let cid = ch.id;
-                self.channel_cache
-                    .lock()
-                    .unwrap()
-                    .insert(conversation_id.to_string(), cid.clone());
-                return Ok(cid);
-            }
+            .context("Failed to query channel by name")?;
+        
+        if resp.status().is_success() {
+            let ch: ChannelResponse =
+                resp.json().await.context("Failed to parse channel response")?;
+            let cid = ch.id;
+            self.channel_cache
+                .lock()
+                .unwrap()
+                .insert(conversation_id.to_string(), cid.clone());
+            return Ok(cid);
+        } else if resp.status().as_u16() != 404 {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Channel lookup failed {}: {}", status, body));
         }
 
         // Create channel if not found
@@ -187,6 +200,7 @@ impl MattermostClient {
         let resp = self
             .client
             .post(&url_create)
+            .header("Authorization", format!("Bearer {}", auth))
             .json(&payload)
             .send()
             .await
@@ -195,8 +209,31 @@ impl MattermostClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
+            if body.contains("already exists") {
+                tracing::info!("Channel {} already exists, re-fetching", name);
+                let retry_url = format!("{}/api/v4/teams/{}/channels/name/{}", self.base_url, team_id, name);
+                let retry_resp = self
+                    .client
+                    .get(&retry_url)
+                    .header("Authorization", format!("Bearer {}", auth))
+                    .send()
+                    .await
+                    .context("Failed to re-fetch channel after exists error")?;
+                if retry_resp.status().is_success() {
+                    let ch: ChannelResponse = retry_resp.json().await.context("Failed to parse channel response")?;
+                    let cid = ch.id;
+                    self.channel_cache
+                        .lock()
+                        .unwrap()
+                        .insert(conversation_id.to_string(), cid.clone());
+                    tracing::info!("Re-fetched existing channel {}", name);
+                    return Ok(cid);
+                }
+            }
             return Err(anyhow::anyhow!(
-                "Mattermost channel create failed {status}: {body}"
+                "Mattermost channel create failed {}: {}",
+                status,
+                body
             ));
         }
 
@@ -220,9 +257,7 @@ impl MattermostClient {
         root_id: Option<&str>,
         create_at: Option<i64>,
     ) -> Result<String> {
-        self.ensure_token()
-            .await
-            .context("Failed to ensure token for posting message")?;
+        let auth = self.get_auth_header().await?;
 
         let url = format!("{}/api/v4/posts", self.base_url);
         let mut payload = serde_json::json!({
@@ -245,6 +280,7 @@ impl MattermostClient {
         let resp = self
             .client
             .post(&url)
+            .header("Authorization", format!("Bearer {}", auth))
             .json(&payload)
             .send()
             .await
@@ -253,7 +289,7 @@ impl MattermostClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Mattermost post failed {status}: {body}"));
+            return Err(anyhow::anyhow!("Mattermost post failed {}: {}", status, body));
         }
 
         let post: PostResponse = resp.json().await.context("Failed to parse post response")?;
@@ -287,9 +323,7 @@ impl MattermostClient {
         channel_id: &str,
         since: i64,
     ) -> Result<Vec<MattermostPost>> {
-        self.ensure_token()
-            .await
-            .context("Failed to ensure token for get_posts_since")?;
+        let auth = self.get_auth_header().await?;
 
         let url = format!(
             "{}/api/v4/channels/{}/posts?since={}&per_page=60",
@@ -299,6 +333,7 @@ impl MattermostClient {
         let resp = self
             .client
             .get(&url)
+            .header("Authorization", format!("Bearer {}", auth))
             .send()
             .await
             .context("Failed to fetch posts from Mattermost")?;
@@ -333,9 +368,7 @@ impl MattermostClient {
         team_id: &str,
         prefix: &str,
     ) -> Result<Vec<ChannelInfo>> {
-        self.ensure_token()
-            .await
-            .context("Failed to ensure token for list_channels_by_prefix")?;
+        let auth = self.get_auth_header().await?;
 
         let url = format!(
             "{}/api/v4/teams/{}/channels?per_page=200",
@@ -345,6 +378,7 @@ impl MattermostClient {
         let resp = self
             .client
             .get(&url)
+            .header("Authorization", format!("Bearer {}", auth))
             .send()
             .await
             .context("Failed to list Mattermost channels")?;
