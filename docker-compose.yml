@@ -55,7 +55,7 @@ services:
 
   # Facebook Graph Service - Fetches messages from Facebook API
   facebook-graph-service:
-    image: facebook-graph-service:latest
+    image: ghcr.io/${GHCR_OWNER:-naonao89}/fbpage-mm-bridge/facebook-graph-service:latest
     build:
       context: .
       dockerfile: services/facebook-graph-service/Dockerfile
