@@ -344,7 +344,7 @@ jobs:
       - name: Deploy via SSH
         run: |
           ssh -i ~/.ssh/deploy_key -o ServerAliveInterval=30 -o ServerAliveCountMax=120 ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} bash << 'EOF'
-            set -euo pipefail
+            set -uo pipefail
             source /tmp/deploy-env.sh
             export NGINX_BIND_IP="$(ip -4 addr show dev eth0 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 | grep -v "^10\." | grep -v "^172\." | grep -v "^192\.168\." | head -1 || echo 0.0.0.0)"
             echo "=== DEBUG: NGINX_BIND_IP=$NGINX_BIND_IP ==="
@@ -448,43 +448,8 @@ jobs:
               echo "All services were rebuilt — no pull needed"
             fi
 
-            docker compose down --remove-orphans --timeout 30 2>/dev/null || true
-
-            poll_service() {
-              local svc="$1"
-              local max_attempts=12
-              local attempt=1
-              while [ $attempt -le $max_attempts ]; do
-                CONTAINER_ID=$(docker compose ps -q "$svc" 2>/dev/null)
-                if [ -z "$CONTAINER_ID" ]; then
-                  echo "[WAIT] $svc: container not ready (attempt $attempt/$max_attempts)"
-                  sleep 5
-                  attempt=$((attempt + 1))
-                  continue
-                fi
-                CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_ID" 2>/dev/null || echo "no-healthcheck")
-                if [ "$CONTAINER_STATUS" = "healthy" ] || [ "$CONTAINER_STATUS" = "no-healthcheck" ]; then
-                  if docker compose ps "$svc" 2>/dev/null | grep -q "Up"; then
-                    echo "[PASS] $svc: ready"
-                    return 0
-                  fi
-                elif [ "$CONTAINER_STATUS" = "unhealthy" ]; then
-                  echo "[FAIL] $svc: unhealthy"
-                  docker compose logs --tail=10 "$svc"
-                  return 1
-                fi
-                if [ $attempt -eq $max_attempts ]; then
-                  echo "[FAIL] $svc: not healthy after ${max_attempts} attempts (status: $CONTAINER_STATUS)"
-                  docker compose logs --tail=10 "$svc"
-                  return 1
-                fi
-                echo "[WAIT] $svc: $CONTAINER_STATUS (attempt $attempt/$max_attempts)"
-                sleep 5
-                attempt=$((attempt + 1))
-              done
-              return 1
-            }
-
+            docker compose down --remove-orphans --timeout 30 || echo "Warning: docker compose down failed (continuing)"
+            
             for c in mattermost customer-service message-service facebook-graph-service mm-bridge-bot nginx; do
               if docker ps --format '{{.Names}}' | grep -q "^$c$"; then
                 docker kill "$c" 2>/dev/null || true
@@ -496,7 +461,15 @@ jobs:
               docker rm -f "$old" 2>/dev/null || true
             done
             sleep 10
-            docker compose up -d
+            
+            echo "Running docker compose up -d..."
+            if ! docker compose up -d; then
+              echo "ERROR: docker compose up failed!"
+              docker compose ps
+              docker compose logs --tail=20
+              exit 1
+            fi
+            echo "docker compose up -d completed successfully"
 
             echo "Waiting for containers to be created..."
             for i in $(seq 1 30); do
@@ -551,7 +524,26 @@ jobs:
             HEALTH_CHECK_FAILED=false
 
             for service in customer-service message-service facebook-graph-service mm-bridge-bot; do
-              poll_service "$service" || true
+              for attempt in $(seq 1 12); do
+                CONTAINER_ID=$(docker compose ps -q "$service" 2>/dev/null || true)
+                if [ -n "$CONTAINER_ID" ]; then
+                  CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_ID" 2>/dev/null || echo "no-healthcheck")
+                  if [ "$CONTAINER_STATUS" = "healthy" ] || [ "$CONTAINER_STATUS" = "no-healthcheck" ]; then
+                    echo "[PASS] $service: ready"
+                    break
+                  elif [ "$CONTAINER_STATUS" = "unhealthy" ]; then
+                    echo "[FAIL] $service: unhealthy"
+                    docker compose logs --tail=5 "$service"
+                    break
+                  fi
+                fi
+                if [ $attempt -eq 12 ]; then
+                  echo "[FAIL] $service: not healthy after 12 attempts"
+                else
+                  echo "[WAIT] $service: attempt $attempt/12"
+                  sleep 5
+                fi
+              done
             done
 
             # Check Mattermost
