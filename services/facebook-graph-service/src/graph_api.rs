@@ -1,7 +1,7 @@
 //! Facebook Graph API client
 //!
 //! Handles all communication with Facebook Graph API including:
-//! - Fetching conversations
+//! - Fetching conversations (page inbox)
 //! - Fetching messages
 //! - Token validation
 //! - Rate limit tracking
