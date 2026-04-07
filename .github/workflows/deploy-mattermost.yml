@@ -450,17 +450,13 @@ jobs:
 
             docker compose down --remove-orphans --timeout 30 || echo "Warning: docker compose down failed (continuing)"
             
-            for c in mattermost customer-service message-service facebook-graph-service mm-bridge-bot nginx; do
-              if docker ps --format '{{.Names}}' | grep -q "^$c$"; then
-                docker kill "$c" 2>/dev/null || true
-                docker rm -f "$c" 2>/dev/null || true
-              fi
-            done
-            docker ps --format '{{.Names}}' | grep -E "^mattermost-" | while read -r old; do
-              docker kill "$old" 2>/dev/null || true
-              docker rm -f "$old" 2>/dev/null || true
-            done
-            sleep 10
+            # Nuclear cleanup: stop ALL containers on this dedicated deploy VPS
+            # This handles port conflicts from previous deploys with different compose project names
+            echo "Stopping all containers on VPS..."
+            docker stop $(docker ps -q) 2>/dev/null || true
+            docker rm -f $(docker ps -aq) 2>/dev/null || true
+            
+            sleep 5
             
             echo "Running docker compose up -d..."
             if ! docker compose up -d; then
