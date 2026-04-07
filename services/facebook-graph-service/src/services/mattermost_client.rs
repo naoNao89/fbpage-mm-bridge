@@ -101,9 +101,10 @@ impl MattermostClient {
 
     /// Retrieve the first team ID for the Mattermost instance
     pub async fn get_team_id(&self) -> Result<String> {
-        self.ensure_token()
-            .await
-            .context("Failed to ensure token for get_team_id")?;
+        if let Err(e) = self.ensure_token().await {
+            tracing::error!("Mattermost ensure_token failed: {e}");
+            return Err(e).context("Failed to ensure token for get_team_id");
+        }
 
         let url = format!("{}/api/v4/teams", self.base_url);
         let resp = self
@@ -116,6 +117,7 @@ impl MattermostClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
+            tracing::error!("Mattermost get_teams failed: {status} {body}");
             return Err(anyhow::anyhow!(
                 "Mattermost get_teams failed with {status}: {body}"
             ));

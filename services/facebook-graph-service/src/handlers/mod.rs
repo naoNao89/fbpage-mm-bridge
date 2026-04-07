@@ -128,19 +128,24 @@ async fn post_to_mattermost(
     root_id: Option<&str>,
 ) -> Result<(), anyhow::Error> {
     let mm = &state.mattermost_client;
-    if let Ok(team_id) = mm.get_team_id().await {
-        if let Ok(channel_id) = mm
-            .get_or_create_channel(&team_id, conversation_id, conversation_id)
-            .await
-        {
-            let root = if let Some(r) = root_id {
-                Some(r.to_string())
-            } else {
-                mm.get_root_id(conversation_id).await.ok().flatten()
-            };
-            mm.post_message(&channel_id, text, root.as_deref(), None)
-                .await?;
+    let team_id = match mm.get_team_id().await {
+        Ok(id) => id,
+        Err(e) => {
+            warn!("Could not determine Mattermost team_id for conversation {}: {e}", conversation_id);
+            return Ok(());
         }
+    };
+    if let Ok(channel_id) = mm
+        .get_or_create_channel(&team_id, conversation_id, conversation_id)
+        .await
+    {
+        let root = if let Some(r) = root_id {
+            Some(r.to_string())
+        } else {
+            mm.get_root_id(conversation_id).await.ok().flatten()
+        };
+        mm.post_message(&channel_id, text, root.as_deref(), None)
+            .await?;
     }
     Ok(())
 }
