@@ -280,12 +280,19 @@ jobs:
         run: |
           echo "GHCR_OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
+      - name: Build update-env tool
+        uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --bin update-env
+
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H -p 22 ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Upload update-env binary
+        run: scp -i ~/.ssh/deploy_key target/release/update-env ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/usr/local/bin/update-env
 
       - name: Write deploy env to server
         env:
@@ -389,7 +396,7 @@ jobs:
               fi
             fi
 
-            python3 scripts/update-env.py
+            /usr/local/bin/update-env
 
             # Fix bind-mount paths that Docker may have auto-created as directories
             # (happens when git checkout is missing the file but docker compose already ran)

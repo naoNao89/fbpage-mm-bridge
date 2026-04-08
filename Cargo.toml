@@ -4,6 +4,7 @@ members = [
     "services/message-service",
     "services/facebook-graph-service",
     "services/mm-bridge-bot",
+    "scripts/update-env",
 ]
 resolver = "3"
 
