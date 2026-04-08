@@ -81,10 +81,20 @@ pub async fn webhook_handler(
                 None => continue,
             };
 
-            let direction = if recipient_id == &state.config.facebook_page_id {
-                "incoming"
+            let is_echo = msg.is_echo.unwrap_or(false);
+
+            // For echo messages (page's own replies), the customer is the recipient.
+            // For incoming messages (from user), the customer is the sender.
+            let (customer_id, conversation_id) = if is_echo {
+                (recipient_id, recipient_id)
             } else {
+                (sender_id, recipient_id)
+            };
+
+            let direction = if is_echo {
                 "outgoing"
+            } else {
+                "incoming"
             };
 
             let text = msg
@@ -95,11 +105,11 @@ pub async fn webhook_handler(
             if let Some(text) = text {
                 if let Ok(customer) = state
                     .customer_client
-                    .get_or_create_customer(sender_id, "facebook", None)
+                    .get_or_create_customer(customer_id, "facebook", None)
                     .await
                 {
                     let payload = MessageServicePayload {
-                        conversation_id: recipient_id.clone(),
+                        conversation_id: conversation_id.to_string(),
                         customer_id: customer.id,
                         platform: "facebook".to_string(),
                         direction: direction.to_string(),
@@ -109,10 +119,8 @@ pub async fn webhook_handler(
                     };
                     let _ = state.message_client.store_message(payload).await;
 
-                    if direction == "incoming" {
-                        let _ = post_to_mattermost(&state, recipient_id, &text, msg.mid.as_deref())
-                            .await;
-                    }
+                    let _ = post_to_mattermost(&state, conversation_id, &text, msg.mid.as_deref())
+                        .await;
                 }
             }
         }
@@ -193,6 +201,7 @@ pub struct WebhookSender {
 pub struct WebhookMessage {
     pub mid: Option<String>,
     pub text: Option<String>,
+    pub is_echo: Option<bool>,
     pub quick_reply: Option<WebhookQuickReply>,
 }
 
