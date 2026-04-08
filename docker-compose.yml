@@ -92,6 +92,7 @@ services:
 
   # MM Bridge Bot - Listens to Mattermost and replies back to Facebook
   mm-bridge-bot:
+    image: ghcr.io/${GHCR_OWNER:-naonao89}/fbpage-mm-bridge/mm-bridge-bot:latest
     build:
       context: .
       dockerfile: services/mm-bridge-bot/Dockerfile
