@@ -5,7 +5,6 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize logging
     let config = Config::from_env()?;
 
     tracing_subscriber::registry()
@@ -16,15 +15,9 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting Facebook Graph Service...");
     info!("Configuration: {:?}", config);
 
-    // Create database connection pool
-    info!("Connecting to database...");
     let pool = db::create_pool(&config.database_url).await?;
-
-    // Run migrations
-    info!("Running database migrations...");
     run_migrations(&pool).await?;
 
-    // Create service clients
     let customer_client =
         facebook_graph_service::services::CustomerServiceClient::new(&config.customer_service_url);
     let message_client =
@@ -35,23 +28,28 @@ async fn main() -> anyhow::Result<()> {
         config.mattermost_password.as_deref(),
     );
 
-    // Create application state
     let state = AppState {
-        pool,
+        pool: pool.clone(),
         config: config.clone(),
         customer_client,
         message_client,
         mattermost_client,
     };
 
-    // Create application router
-    let app = create_app(state);
+    let app = create_app(state.clone());
 
-    // Parse bind address
     let addr: SocketAddr = config.bind_address.parse()?;
     info!("Facebook Graph Service listening on {}", addr);
 
-    // Start server
+    if config.poll_interval_secs > 0 {
+        let poll_state = state.clone();
+        let poll_interval = config.poll_interval_secs;
+        tokio::spawn(async move {
+            facebook_graph_service::poll::run_poller(poll_state, poll_interval).await;
+        });
+        info!("Real-time poller started (interval: {}s)", config.poll_interval_secs);
+    }
+
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
 

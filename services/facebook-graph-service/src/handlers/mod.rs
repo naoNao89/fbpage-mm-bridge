@@ -497,7 +497,7 @@ pub async fn exchange_token(
 }
 
 /// Process a single conversation - fetch messages and store via services
-async fn process_conversation(
+pub async fn process_conversation(
     state: &AppState,
     conversation_id: &str,
     page_id: &str,

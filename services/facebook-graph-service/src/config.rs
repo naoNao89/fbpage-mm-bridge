@@ -35,6 +35,9 @@ pub struct Config {
     /// Rate limit critical threshold (percentage)
     #[serde(default = "default_rate_limit_critical_threshold")]
     pub rate_limit_critical_threshold: f32,
+    /// Polling interval in seconds for real-time message detection (0 = disabled)
+    #[serde(default = "default_poll_interval")]
+    pub poll_interval_secs: u64,
 }
 
 fn default_rate_limit_warning_threshold() -> f32 {
@@ -43,6 +46,10 @@ fn default_rate_limit_warning_threshold() -> f32 {
 
 fn default_rate_limit_critical_threshold() -> f32 {
     95.0
+}
+
+fn default_poll_interval() -> u64 {
+    30
 }
 
 impl Config {
@@ -77,6 +84,10 @@ impl Config {
                 .unwrap_or_else(|_| "95.0".to_string())
                 .parse()
                 .unwrap_or(95.0),
+            poll_interval_secs: env::var("POLL_INTERVAL_SECS")
+                .unwrap_or_else(|_| "30".to_string())
+                .parse()
+                .unwrap_or(30),
         })
     }
 }
