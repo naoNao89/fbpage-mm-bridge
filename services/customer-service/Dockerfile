@@ -1,47 +1,36 @@
-# Build stage 1: Planner - prepare recipe.json
-FROM lukemathwalker/cargo-chef:latest-rust-1 AS planner
+FROM rust:1.88-bookworm AS builder
 
 WORKDIR /app
 
-# Copy manifests first (for dependency resolution)
-COPY Cargo.toml Cargo.lock* ./
-COPY services/customer-service/Cargo.toml services/customer-service/
-COPY services/message-service/Cargo.toml services/message-service/
-COPY services/facebook-graph-service/Cargo.toml services/facebook-graph-service/
-COPY services/mm-bridge-bot/Cargo.toml services/mm-bridge-bot/
-
-COPY services/customer-service/src services/customer-service/src
-COPY services/message-service/src services/message-service/src
-COPY services/facebook-graph-service/src services/facebook-graph-service/src
-COPY services/mm-bridge-bot/src services/mm-bridge-bot/src
-
-RUN cargo chef prepare --recipe-path recipe.json
-
-# Build stage 2: Builder - cook dependencies (cached layer!)
-FROM lukemathwalker/cargo-chef:latest-rust-1 AS builder
-
-WORKDIR /app
-
-# Copy recipe from planner
-COPY --from=planner /app/recipe.json recipe.json
-
-# Install build dependencies
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Cook dependencies - this layer is cached until Cargo.lock changes!
-RUN cargo chef cook --release --package customer-service --recipe-path recipe.json
+COPY Cargo.toml Cargo.lock ./
+COPY services/customer-service/Cargo.toml services/customer-service/
+COPY services/message-service/Cargo.toml services/message-service/
+COPY services/facebook-graph-service/Cargo.toml services/facebook-graph-service/
+COPY services/mm-bridge-bot/Cargo.toml services/mm-bridge-bot/
 
-# Copy source code
+RUN mkdir -p services/customer-service/src && \
+    mkdir -p services/message-service/src && \
+    mkdir -p services/facebook-graph-service/src && \
+    mkdir -p services/mm-bridge-bot/src && \
+    echo 'fn main() {}' > services/customer-service/src/main.rs && \
+    echo 'fn main() {}' > services/message-service/src/main.rs && \
+    echo 'fn main() {}' > services/facebook-graph-service/src/main.rs && \
+    echo 'fn main() {}' > services/mm-bridge-bot/src/main.rs
+
+RUN cargo build --release --package customer-service
+
 COPY services/customer-service/src services/customer-service/src
 COPY services/customer-service/migrations services/customer-service/migrations
 
-# Build the actual binary
+RUN touch services/customer-service/src/main.rs
+
 RUN cargo build --release --package customer-service
 
-# Build stage 3: Runtime
 FROM debian:bookworm-slim
 
 RUN apt-get update && \

@@ -1,35 +1,33 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1 AS planner
+FROM rust:1.88-bookworm AS builder
 
 WORKDIR /app
-
-COPY Cargo.toml Cargo.lock* ./
-COPY services/customer-service/Cargo.toml services/customer-service/
-COPY services/message-service/Cargo.toml services/message-service/
-COPY services/facebook-graph-service/Cargo.toml services/facebook-graph-service/
-COPY services/mm-bridge-bot/Cargo.toml services/mm-bridge-bot/
-
-COPY services/customer-service/src services/customer-service/src
-COPY services/message-service/src services/message-service/src
-COPY services/facebook-graph-service/src services/facebook-graph-service/src
-COPY services/mm-bridge-bot/src services/mm-bridge-bot/src
-
-RUN cargo chef prepare --recipe-path recipe.json
-
-FROM lukemathwalker/cargo-chef:latest-rust-1 AS builder
-
-WORKDIR /app
-
-COPY --from=planner /app/recipe.json recipe.json
 
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN cargo chef cook --release --package facebook-graph-service --recipe-path recipe.json
+COPY Cargo.toml Cargo.lock ./
+COPY services/customer-service/Cargo.toml services/customer-service/
+COPY services/message-service/Cargo.toml services/message-service/
+COPY services/facebook-graph-service/Cargo.toml services/facebook-graph-service/
+COPY services/mm-bridge-bot/Cargo.toml services/mm-bridge-bot/
+
+RUN mkdir -p services/customer-service/src && \
+    mkdir -p services/message-service/src && \
+    mkdir -p services/facebook-graph-service/src && \
+    mkdir -p services/mm-bridge-bot/src && \
+    echo 'fn main() {}' > services/customer-service/src/main.rs && \
+    echo 'fn main() {}' > services/message-service/src/main.rs && \
+    echo 'fn main() {}' > services/facebook-graph-service/src/main.rs && \
+    echo 'fn main() {}' > services/mm-bridge-bot/src/main.rs
+
+RUN cargo build --release --package facebook-graph-service
 
 COPY services/facebook-graph-service/src services/facebook-graph-service/src
 COPY services/facebook-graph-service/migrations services/facebook-graph-service/migrations
+
+RUN touch services/facebook-graph-service/src/main.rs
 
 RUN cargo build --release --package facebook-graph-service
 
