@@ -249,6 +249,81 @@ pub fn calculate_backoff_duration(usage_percent: f32) -> Duration {
     }
 }
 
+// Efficient Polling - fetch only recently updated conversations
+
+/// Fetch conversations updated after the given timestamp.
+///
+/// The FB Conversations API returns results sorted by `updated_time` descending,
+/// so we fetch pages until we find conversations older than `since` — then stop.
+/// This is O(recent_conversations) instead of O(all_conversations).
+pub async fn get_recent_conversations(
+    config: &Config,
+    since: DateTime<Utc>,
+) -> Result<Vec<Conversation>> {
+    let client = Client::new();
+    let access_token = &config.facebook_page_access_token;
+    let page_id = &config.facebook_page_id;
+
+    let mut recent = Vec::new();
+    let mut next_url = Some(format!(
+        "{GRAPH_API_BASE}/{page_id}/conversations?fields=id,updated_time,message_count&access_token={access_token}&limit=25"
+    ));
+    let mut page = 0;
+
+    while let Some(url) = next_url {
+        page += 1;
+        let response = client
+            .get(&url)
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .send()
+            .await
+            .context("Failed to fetch conversations for polling")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            return Err(anyhow::anyhow!(
+                "Conversations poll failed {status}: {error_text}"
+            ));
+        }
+
+        let conv_response: ConversationsResponse = response
+            .json()
+            .await
+            .context("Failed to parse conversations response")?;
+
+        let mut found_old = false;
+        for conv in conv_response.data {
+            if conv.updated_time > since {
+                recent.push(conv);
+            } else {
+                found_old = true;
+                break;
+            }
+        }
+
+        // Stop paginating once we see conversations older than our cutoff
+        if found_old {
+            break;
+        }
+
+        next_url = conv_response.paging.and_then(|p| p.next);
+
+        if next_url.is_some() {
+            tokio::time::sleep(Duration::from_millis(PAGINATION_DELAY_MS)).await;
+        }
+    }
+
+    info!(
+        "Poll: found {} conversations updated since {} ({} pages)",
+        recent.len(),
+        since,
+        page
+    );
+
+    Ok(recent)
+}
+
 // Conversation Fetching
 
 /// Fetch all conversations from Facebook Graph API with pagination
@@ -343,7 +418,74 @@ pub async fn get_conversations(pool: &PgPool, config: &Config) -> Result<Vec<Con
     Ok(all_conversations)
 }
 
-// Message Fetching
+/// Fetch only messages created after the given timestamp for a conversation.
+/// Stops paginating once all messages on a page are older than `since`,
+/// because results come in reverse chronological order from FB.
+pub async fn get_conversation_messages_since(
+    conversation_id: &str,
+    access_token: &str,
+    since: DateTime<Utc>,
+) -> Result<Vec<GraphMessage>> {
+    let client = Client::new();
+    let mut recent_messages = Vec::new();
+    let mut next_url = Some(build_messages_url(conversation_id, access_token));
+    let mut page = 0;
+
+    while let Some(url) = next_url {
+        page += 1;
+        let response = client
+            .get(&url)
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .send()
+            .await
+            .context("Failed to fetch messages for polling")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            return Err(anyhow::anyhow!(
+                "Messages poll failed for {conversation_id} ({status}): {error_text}"
+            ));
+        }
+
+        let msg_response: MessagesResponse = response
+            .json()
+            .await
+            .context("Failed to parse messages response")?;
+
+        let mut found_old = false;
+        for msg in &msg_response.data {
+            if msg.created_time > since {
+                recent_messages.push(msg.clone());
+            } else {
+                found_old = true;
+                break;
+            }
+        }
+
+        if found_old {
+            break;
+        }
+
+        next_url = msg_response.paging.as_ref().and_then(|p| p.next.clone());
+
+        if next_url.is_some() {
+            tokio::time::sleep(Duration::from_millis(PAGINATION_DELAY_MS)).await;
+        }
+    }
+
+    info!(
+        "Poll: found {} new messages in conversation {} since {} ({} pages)",
+        recent_messages.len(),
+        conversation_id,
+        since,
+        page
+    );
+
+    Ok(recent_messages)
+}
+
+// Full Message Fetching (for historical import)
 
 /// Fetch all messages for a conversation with pagination
 pub async fn get_conversation_messages(
