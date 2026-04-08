@@ -77,6 +77,7 @@ services:
       - MATTERMOST_URL=http://mattermost:8065
       - MATTERMOST_USERNAME=${MATTERMOST_USERNAME:-admin}
       - MATTERMOST_PASSWORD=${MATTERMOST_PASSWORD}
+      - POLL_INTERVAL_SECS=${POLL_INTERVAL_SECS:-30}
     depends_on:
       - facebook-db
       - customer-service

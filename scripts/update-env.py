@@ -16,6 +16,7 @@ FACEBOOK_PAGE_ACCESS_TOKEN={os.environ.get('FACEBOOK_PAGE_ACCESS_TOKEN', '')}
 FACEBOOK_APP_ID={os.environ.get('FACEBOOK_APP_ID', '')}
 FACEBOOK_APP_SECRET={os.environ.get('FACEBOOK_APP_SECRET', '')}
 FACEBOOK_WEBHOOK_VERIFY_TOKEN={os.environ.get('FACEBOOK_WEBHOOK_VERIFY_TOKEN', '')}
+POLL_INTERVAL_SECS={os.environ.get('POLL_INTERVAL_SECS', '30')}
 MM_SITE_URL={os.environ.get('MM_SITE_URL', '')}
 MM_DOMAIN={os.environ.get('MM_DOMAIN', '')}
 MM_ADMIN_EMAIL={os.environ.get('MM_ADMIN_EMAIL', '')}
