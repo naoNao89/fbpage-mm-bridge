@@ -391,8 +391,17 @@ jobs:
 
             python3 scripts/update-env.py
 
+            # Fix bind-mount paths that Docker may have auto-created as directories
+            # (happens when git checkout is missing the file but docker compose already ran)
+            for f in nginx/nginx.conf secrets/admin_password; do
+              if [ -d "$f" ]; then
+                echo "Fixing auto-created directory: $f -> removing"
+                rm -rf "$f"
+              fi
+            done
+            mkdir -p secrets nginx certs
+
             # Copy SSL certificates from Let's Encrypt (where certbot stores them) to repo dir
-            mkdir -p certs
             if [ -d "/etc/letsencrypt/live/${WEBHOOK_DOMAIN}" ]; then
               cp "/etc/letsencrypt/live/${WEBHOOK_DOMAIN}/fullchain.pem" certs/ 2>/dev/null || true
               cp "/etc/letsencrypt/live/${WEBHOOK_DOMAIN}/privkey.pem" certs/ 2>/dev/null || true
@@ -441,6 +450,10 @@ jobs:
 
             echo "Pulling ALL service images from GHCR..."
             docker compose pull 2>/dev/null || echo "Warning: docker compose pull had errors (continuing)"
+
+            # Ensure the Docker network exists before compose up
+            docker network inspect mattermost_fbpage-mm-network >/dev/null 2>&1 || \
+              docker network create mattermost_fbpage-mm-network
 
             docker compose down --remove-orphans --timeout 30 || echo "Warning: docker compose down failed (continuing)"
 
