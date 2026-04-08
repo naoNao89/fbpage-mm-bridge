@@ -439,27 +439,21 @@ jobs:
               echo "[BUILD] mm-bridge-bot was rebuilt — using pushed image"
             fi
 
-            if [ ${#PULL_SERVICES[@]} -gt 0 ]; then
-              echo "Pulling unchanged services: ${PULL_SERVICES[*]}"
-              for svc in "${PULL_SERVICES[@]}"; do
-                docker compose pull "$svc" || echo "Warning: failed to pull $svc"
-              done
-            else
-              echo "All services were rebuilt — no pull needed"
-            fi
+            echo "Pulling ALL service images from GHCR..."
+            docker compose pull 2>/dev/null || echo "Warning: docker compose pull had errors (continuing)"
 
             docker compose down --remove-orphans --timeout 30 || echo "Warning: docker compose down failed (continuing)"
-            
+
             # Nuclear cleanup: stop ALL containers on this dedicated deploy VPS
             # This handles port conflicts from previous deploys with different compose project names
             echo "Stopping all containers on VPS..."
             docker stop $(docker ps -q) 2>/dev/null || true
             docker rm -f $(docker ps -aq) 2>/dev/null || true
-            
+
             sleep 5
-            
-            echo "Running docker compose up -d..."
-            if ! docker compose up -d; then
+
+            echo "Running docker compose up -d --force-recreate..."
+            if ! docker compose up -d --force-recreate; then
               echo "ERROR: docker compose up failed!"
               docker compose ps
               docker compose logs --tail=20
@@ -551,6 +545,9 @@ jobs:
             fi
 
             echo ""
+            echo "=== Reloading nginx to refresh upstream DNS ==="
+            docker exec mattermost-nginx-1 nginx -s reload 2>/dev/null || echo "Warning: nginx reload failed"
+
             echo "=== Deploy complete (health check failures are non-fatal) ==="
             exit 0
           EOF
