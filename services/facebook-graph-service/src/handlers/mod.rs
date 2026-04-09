@@ -99,9 +99,20 @@ pub async fn webhook_handler(
                 .or_else(|| msg.quick_reply.as_ref().map(|q| q.payload.clone()));
 
             if let Some(text) = text {
+                let customer_name = if !is_echo {
+                    graph_api::resolve_facebook_user_name(
+                        &state.config.facebook_page_access_token,
+                        sender_id,
+                    )
+                    .await
+                    .ok()
+                } else {
+                    None
+                };
+
                 if let Ok(customer) = state
                     .customer_client
-                    .get_or_create_customer(customer_id, "facebook", None)
+                    .get_or_create_customer(customer_id, "facebook", customer_name.as_deref())
                     .await
                 {
                     let payload = MessageServicePayload {
@@ -115,8 +126,14 @@ pub async fn webhook_handler(
                     };
                     let _ = state.message_client.store_message(payload).await;
 
-                    let _ = post_to_mattermost(&state, conversation_id, &text, msg.mid.as_deref())
-                        .await;
+                    let _ = post_to_mattermost(
+                        &state,
+                        conversation_id,
+                        &text,
+                        msg.mid.as_deref(),
+                        customer_name.as_deref(),
+                    )
+                    .await;
                 }
             }
         }
@@ -130,6 +147,7 @@ async fn post_to_mattermost(
     conversation_id: &str,
     text: &str,
     root_id: Option<&str>,
+    display_name: Option<&str>,
 ) -> Result<(), anyhow::Error> {
     let mm = &state.mattermost_client;
     let team_id = match mm.get_team_id().await {
@@ -142,10 +160,19 @@ async fn post_to_mattermost(
             return Ok(());
         }
     };
+    let channel_display = display_name.unwrap_or(conversation_id);
     if let Ok(channel_id) = mm
-        .get_or_create_channel(&team_id, conversation_id, conversation_id)
+        .get_or_create_channel(&team_id, conversation_id, channel_display)
         .await
     {
+        if let Ok(channels) = mm.list_channels_by_prefix(&team_id, conversation_id).await {
+            if let Some(ch) = channels.first() {
+                if ch.display_name == conversation_id {
+                    let _ = mm.patch_channel_display_name(&ch.id, channel_display).await;
+                }
+            }
+        }
+
         let root = if let Some(r) = root_id {
             Some(r.to_string())
         } else {
@@ -515,6 +542,10 @@ pub async fn process_conversation(
         total_messages, conversation_id
     );
 
+    let customer_name = messages.iter().find(|m| m.from.id != page_id)
+        .map(|m| m.from.name.clone())
+        .unwrap_or_else(|| conversation_id.to_string());
+
     let mut messages_stored = 0;
     let mut messages_skipped = 0;
 
@@ -525,15 +556,13 @@ pub async fn process_conversation(
         let direction = if is_from_page { "outgoing" } else { "incoming" };
 
         // Get customer info
-        let (customer_platform_id, customer_name): (Option<String>, Option<String>) =
+        let (customer_platform_id, customer_name_for_msg): (Option<String>, Option<String>) =
             if is_from_page {
-                // For outgoing messages, customer is the recipient
                 (
                     msg.to.data.first().map(|u| u.id.clone()),
                     msg.to.data.first().map(|u| u.name.clone()),
                 )
             } else {
-                // For incoming messages, customer is the sender
                 (Some(msg.from.id.clone()), Some(msg.from.name.clone()))
             };
 
@@ -548,7 +577,7 @@ pub async fn process_conversation(
         // Get or create customer via Customer Service
         let customer = match state
             .customer_client
-            .get_or_create_customer(&cust_id, "facebook", customer_name.as_deref())
+            .get_or_create_customer(&cust_id, "facebook", customer_name_for_msg.as_deref())
             .await
         {
             Ok(c) => {
@@ -575,15 +604,20 @@ pub async fn process_conversation(
         match state.message_client.store_message(message_payload).await {
             Ok(_) => {
                 messages_stored += 1;
-                // Attempt to post to Mattermost as a normal conversation (threaded)
-                // Best-effort: log and continue on failure
                 let mm = &state.mattermost_client;
-                // Ensure token and fetch team/channel, post message
                 if let Ok(team_id) = mm.get_team_id().await {
                     if let Ok(channel_id) = mm
-                        .get_or_create_channel(&team_id, conversation_id, conversation_id)
+                        .get_or_create_channel(&team_id, conversation_id, &customer_name)
                         .await
                     {
+                        if let Ok(channels) = mm.list_channels_by_prefix(&team_id, conversation_id).await {
+                            if let Some(ch) = channels.first() {
+                                if ch.display_name == conversation_id {
+                                    let _ = mm.patch_channel_display_name(&ch.id, &customer_name).await;
+                                }
+                            }
+                        }
+
                         let root_id_opt = mm.get_root_id(conversation_id).await?;
                         let root_id_slice = root_id_opt.as_deref();
                         match mm
@@ -597,7 +631,6 @@ pub async fn process_conversation(
                         {
                             Ok(post_id) => {
                                 if root_id_opt.is_none() {
-                                    // store root_id for threading
                                     mm.set_root_id(conversation_id, &post_id);
                                 }
                             }
@@ -617,12 +650,10 @@ pub async fn process_conversation(
                 }
             }
             Err(e) if e.to_string().contains("already exists") => {
-                // Duplicate - expected on re-runs
                 messages_skipped += 1;
             }
             Err(e) => {
                 error!("Failed to store message {}: {}", msg.id, e);
-                // Continue processing other messages
             }
         }
     }
