@@ -16,19 +16,16 @@ COPY services/customer-service/Cargo.toml services/customer-service/
 COPY services/message-service/Cargo.toml services/message-service/
 COPY services/facebook-graph-service/Cargo.toml services/facebook-graph-service/
 COPY services/mm-bridge-bot/Cargo.toml services/mm-bridge-bot/
-COPY scripts/update-env/Cargo.toml scripts/update-env/
 
 # Create dummy source files so cargo can resolve the workspace
 RUN mkdir -p services/customer-service/src && \
     mkdir -p services/message-service/src && \
     mkdir -p services/facebook-graph-service/src && \
     mkdir -p services/mm-bridge-bot/src && \
-    mkdir -p scripts/update-env/src && \
     echo 'fn main() {}' > services/customer-service/src/main.rs && \
     echo 'fn main() {}' > services/message-service/src/main.rs && \
     echo 'fn main() {}' > services/facebook-graph-service/src/main.rs && \
-    echo 'fn main() {}' > services/mm-bridge-bot/src/main.rs && \
-    echo 'fn main() {}' > scripts/update-env/src/main.rs
+    echo 'fn main() {}' > services/mm-bridge-bot/src/main.rs
 
 # Build dependencies only (this layer gets cached)
 RUN cargo build --release --package mm-bridge-bot
