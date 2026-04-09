@@ -314,33 +314,31 @@ jobs:
           FACEBOOK_APP_ID: ${{ secrets.FACEBOOK_APP_ID }}
           FACEBOOK_APP_SECRET: ${{ secrets.FACEBOOK_APP_SECRET }}
         run: |
-          DEPLOY_ENV=$(cat << 'ENVOF'
-          export MM_DOMAIN='${MM_DOMAIN}'
-          export MM_SITE_URL='${MM_SITE_URL}'
-          export MM_ADMIN_EMAIL='${MM_ADMIN_EMAIL}'
-          export MM_ADMIN_USERNAME='${MM_ADMIN_USERNAME}'
-          export MM_BOT_USERNAME='${MM_BOT_USERNAME}'
-          export MM_BOT_DISPLAY_NAME='${MM_BOT_DISPLAY_NAME}'
-          export MM_BOT_DESCRIPTION='${MM_BOT_DESCRIPTION}'
-          export MM_ADMIN_PASSWORD='${MM_ADMIN_PASSWORD}'
-          export MATTERMOST_PASSWORD='${MATTERMOST_PASSWORD}'
-          export WEBHOOK_DOMAIN='${WEBHOOK_DOMAIN}'
-          export FACEBOOK_WEBHOOK_VERIFY_TOKEN='${FACEBOOK_WEBHOOK_VERIFY_TOKEN}'
-          export SSL_EMAIL='${SSL_EMAIL}'
-          export REPO='${REPO}'
-          export BRANCH='${BRANCH}'
-          export IMAGE_TAG='${IMAGE_TAG}'
-          export BUILD_CUSTOMER='${BUILD_CUSTOMER}'
-          export BUILD_MESSAGE='${BUILD_MESSAGE}'
-          export BUILD_FACEBOOK='${BUILD_FACEBOOK}'
-          export BUILD_MM_BRIDGE_BOT='${BUILD_MM_BRIDGE_BOT}'
-          export POSTGRES_PASSWORD='${POSTGRES_PASSWORD}'
-          export FACEBOOK_PAGE_ID='${FACEBOOK_PAGE_ID}'
-          export FACEBOOK_PAGE_ACCESS_TOKEN='${FACEBOOK_PAGE_ACCESS_TOKEN}'
-          export FACEBOOK_APP_ID='${FACEBOOK_APP_ID}'
-          export FACEBOOK_APP_SECRET='${FACEBOOK_APP_SECRET}'
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cat > /tmp/deploy-env.sh" <<ENVOF
+          export MM_DOMAIN="${MM_DOMAIN}"
+          export MM_SITE_URL="${MM_SITE_URL}"
+          export MM_ADMIN_EMAIL="${MM_ADMIN_EMAIL}"
+          export MM_ADMIN_USERNAME="${MM_ADMIN_USERNAME}"
+          export MM_BOT_USERNAME="${MM_BOT_USERNAME}"
+          export MM_BOT_DISPLAY_NAME="${MM_BOT_DISPLAY_NAME}"
+          export MM_BOT_DESCRIPTION="${MM_BOT_DESCRIPTION}"
+          export MM_ADMIN_PASSWORD="${MM_ADMIN_PASSWORD}"
+          export MATTERMOST_PASSWORD="${MATTERMOST_PASSWORD}"
+          export WEBHOOK_DOMAIN="${WEBHOOK_DOMAIN}"
+          export FACEBOOK_WEBHOOK_VERIFY_TOKEN="${FACEBOOK_WEBHOOK_VERIFY_TOKEN}"
+          export SSL_EMAIL="${SSL_EMAIL}"
+          export REPO="${REPO}"
+          export BRANCH="${BRANCH}"
+          export IMAGE_TAG="${IMAGE_TAG}"
+          export BUILD_CUSTOMER="${BUILD_CUSTOMER}"
+          export BUILD_MESSAGE="${BUILD_MESSAGE}"
+          export BUILD_FACEBOOK="${BUILD_FACEBOOK}"
+          export BUILD_MM_BRIDGE_BOT="${BUILD_MM_BRIDGE_BOT}"
+          export POSTGRES_PASSWORD="${POSTGRES_PASSWORD}"
+          export FACEBOOK_PAGE_ID="${FACEBOOK_PAGE_ID}"
+          export FACEBOOK_PAGE_ACCESS_TOKEN="${FACEBOOK_PAGE_ACCESS_TOKEN}"
+          export FACEBOOK_APP_ID="${FACEBOOK_APP_ID}"
+          export FACEBOOK_APP_SECRET="${FACEBOOK_APP_SECRET}"
           ENVOF
-          )
-          ssh -i ~/.ssh/deploy_key -o ServerAliveInterval=30 -o ServerAliveCountMax=120 ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cat > /tmp/deploy-env.sh" <<< "$DEPLOY_ENV"
           scp -i ~/.ssh/deploy_key scripts/deploy.sh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/tmp/deploy.sh
           ssh -i ~/.ssh/deploy_key -o ServerAliveInterval=30 -o ServerAliveCountMax=120 ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /tmp/deploy-env.sh && bash /tmp/deploy.sh"
