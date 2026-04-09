@@ -37,9 +37,8 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy release test binaries
-RUN cp /app/target/release/test* /usr/local/bin/ 2>/dev/null || true
-COPY --from=builder /app/target/release/deps /usr/local/cargo/deps
+# Copy full target directory for incremental compilation
+COPY --from=builder /app/target /app/target
 
 # Copy source for test structure
 COPY --from=builder /app/services /app/services
@@ -47,11 +46,8 @@ COPY --from=builder /app/src /app/src
 COPY --from=builder /app/Cargo.toml /app/
 COPY --from=builder /app/Cargo.lock /app/
 
-# Install minimal cargo
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-
 ENV PATH="/root/.cargo/bin:$PATH"
 ENV RUST_BACKTRACE=1
 ENV TEST_LOG_LEVEL=debug
 
-CMD ["cargo", "test", "--release", "--workspace", "--", "--test-threads=1"]
+CMD ["cargo", "test", "--release", "--workspace", "--offline", "--", "--test-threads=1"]
