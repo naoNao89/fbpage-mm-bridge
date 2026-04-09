@@ -206,5 +206,60 @@ mod tests {
 
             println!("Rate limit: {:.1}%", status.usage_percent);
         }
+
+        #[tokio::test]
+        #[ignore]
+        async fn test_real_fetch_user_picture() {
+            let config = init_env();
+
+            let picture_url =
+                graph_api::get_user_picture("me", &config.facebook_page_access_token, 200, 200)
+                    .await
+                    .expect("Failed to fetch user picture");
+
+            println!("Picture URL: {}", picture_url);
+            assert!(picture_url.starts_with("https://"), "URL should be HTTPS");
+        }
+
+        #[tokio::test]
+        #[ignore]
+        async fn test_real_fetch_conversation_user_picture() {
+            let config = init_env();
+            let pool = create_pool(&config.database_url).await;
+
+            let conversations = graph_api::get_conversations(&pool, &config)
+                .await
+                .expect("Failed to fetch conversations");
+
+            if conversations.is_empty() {
+                println!("No conversations available");
+                return;
+            }
+
+            let messages = graph_api::get_conversation_messages(
+                &pool,
+                &conversations[0].id,
+                &config.facebook_page_access_token,
+            )
+            .await
+            .expect("Failed to fetch messages");
+
+            let user_id = messages
+                .iter()
+                .find(|m| m.from.id != config.facebook_page_id)
+                .map(|m| m.from.id.clone());
+
+            if let Some(uid) = user_id {
+                let picture_url =
+                    graph_api::get_user_picture(&uid, &config.facebook_page_access_token, 200, 200)
+                        .await
+                        .expect("Failed to fetch user picture");
+
+                println!("User {} picture URL: {}", uid, picture_url);
+                assert!(picture_url.starts_with("https://"), "URL should be HTTPS");
+            } else {
+                println!("No user messages found in conversation");
+            }
+        }
     }
 }

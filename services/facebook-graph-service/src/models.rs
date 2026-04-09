@@ -67,6 +67,22 @@ pub struct Conversation {
     pub message_count: Option<i32>,
 }
 
+/// Facebook user profile picture response
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserPictureResponse {
+    pub data: UserPictureData,
+}
+
+/// Data for the user profile picture
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserPictureData {
+    pub url: String,
+    pub height: i32,
+    pub width: i32,
+    #[serde(rename = "is_silhouette")]
+    pub is_silhouette: bool,
+}
+
 /// Facebook conversations response with paging
 #[derive(Debug, Deserialize)]
 pub struct ConversationsResponse {
