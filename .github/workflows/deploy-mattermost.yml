@@ -287,7 +287,7 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H -p 22 ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Write deploy env to server
+      - name: Deploy
         env:
           MM_DOMAIN: ${{ secrets.MM_DOMAIN }}
           MM_SITE_URL: ${{ secrets.MM_SITE_URL }}
@@ -314,240 +314,33 @@ jobs:
           FACEBOOK_APP_ID: ${{ secrets.FACEBOOK_APP_ID }}
           FACEBOOK_APP_SECRET: ${{ secrets.FACEBOOK_APP_SECRET }}
         run: |
-          cat << ENVOF | ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cat > /tmp/deploy-env.sh"
-          export MM_DOMAIN='$MM_DOMAIN'
-          export MM_SITE_URL='$MM_SITE_URL'
-          export MM_ADMIN_EMAIL='$MM_ADMIN_EMAIL'
-          export MM_ADMIN_USERNAME='$MM_ADMIN_USERNAME'
-          export MM_BOT_USERNAME='$MM_BOT_USERNAME'
-          export MM_BOT_DISPLAY_NAME='$MM_BOT_DISPLAY_NAME'
-          export MM_BOT_DESCRIPTION='$MM_BOT_DESCRIPTION'
-          export MM_ADMIN_PASSWORD='$MM_ADMIN_PASSWORD'
-          export MATTERMOST_PASSWORD='$MATTERMOST_PASSWORD'
-          export WEBHOOK_DOMAIN='$WEBHOOK_DOMAIN'
-          export FACEBOOK_WEBHOOK_VERIFY_TOKEN='$FACEBOOK_WEBHOOK_VERIFY_TOKEN'
-          export SSL_EMAIL='$SSL_EMAIL'
-          export REPO='$REPO'
-          export BRANCH='$BRANCH'
-          export IMAGE_TAG='$IMAGE_TAG'
-          export BUILD_CUSTOMER='$BUILD_CUSTOMER'
-          export BUILD_MESSAGE='$BUILD_MESSAGE'
-          export BUILD_FACEBOOK='$BUILD_FACEBOOK'
-          export BUILD_MM_BRIDGE_BOT='$BUILD_MM_BRIDGE_BOT'
-          export POSTGRES_PASSWORD='$POSTGRES_PASSWORD'
-          export FACEBOOK_PAGE_ID='$FACEBOOK_PAGE_ID'
-          export FACEBOOK_PAGE_ACCESS_TOKEN='$FACEBOOK_PAGE_ACCESS_TOKEN'
-          export FACEBOOK_APP_ID='$FACEBOOK_APP_ID'
-          export FACEBOOK_APP_SECRET='$FACEBOOK_APP_SECRET'
+          DEPLOY_ENV=$(cat << 'ENVOF'
+          export MM_DOMAIN='${MM_DOMAIN}'
+          export MM_SITE_URL='${MM_SITE_URL}'
+          export MM_ADMIN_EMAIL='${MM_ADMIN_EMAIL}'
+          export MM_ADMIN_USERNAME='${MM_ADMIN_USERNAME}'
+          export MM_BOT_USERNAME='${MM_BOT_USERNAME}'
+          export MM_BOT_DISPLAY_NAME='${MM_BOT_DISPLAY_NAME}'
+          export MM_BOT_DESCRIPTION='${MM_BOT_DESCRIPTION}'
+          export MM_ADMIN_PASSWORD='${MM_ADMIN_PASSWORD}'
+          export MATTERMOST_PASSWORD='${MATTERMOST_PASSWORD}'
+          export WEBHOOK_DOMAIN='${WEBHOOK_DOMAIN}'
+          export FACEBOOK_WEBHOOK_VERIFY_TOKEN='${FACEBOOK_WEBHOOK_VERIFY_TOKEN}'
+          export SSL_EMAIL='${SSL_EMAIL}'
+          export REPO='${REPO}'
+          export BRANCH='${BRANCH}'
+          export IMAGE_TAG='${IMAGE_TAG}'
+          export BUILD_CUSTOMER='${BUILD_CUSTOMER}'
+          export BUILD_MESSAGE='${BUILD_MESSAGE}'
+          export BUILD_FACEBOOK='${BUILD_FACEBOOK}'
+          export BUILD_MM_BRIDGE_BOT='${BUILD_MM_BRIDGE_BOT}'
+          export POSTGRES_PASSWORD='${POSTGRES_PASSWORD}'
+          export FACEBOOK_PAGE_ID='${FACEBOOK_PAGE_ID}'
+          export FACEBOOK_PAGE_ACCESS_TOKEN='${FACEBOOK_PAGE_ACCESS_TOKEN}'
+          export FACEBOOK_APP_ID='${FACEBOOK_APP_ID}'
+          export FACEBOOK_APP_SECRET='${FACEBOOK_APP_SECRET}'
           ENVOF
-
-      - name: Deploy via SSH
-        run: |
-          ssh -i ~/.ssh/deploy_key -o ServerAliveInterval=30 -o ServerAliveCountMax=120 ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} bash << 'EOF'
-            set -uo pipefail
-            source /tmp/deploy-env.sh
-            export NGINX_BIND_IP="$(ip -4 addr show dev eth0 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 | grep -v "^10\." | grep -v "^172\." | grep -v "^192\.168\." | head -1 || echo 0.0.0.0)"
-            echo "=== DEBUG: NGINX_BIND_IP=$NGINX_BIND_IP ==="
-            echo "=== DEBUG: ip addr eth0 ==="
-            ip -4 addr show dev eth0 2>/dev/null || echo "eth0 not found"
-            export USER="${USER:-$(whoami)}"
-
-            export STACK_DIR="/opt/mattermost"
-            export SECRETS_DIR="$STACK_DIR/secrets"
-            export ADMIN_PW_FILE_HOST="$SECRETS_DIR/admin_password"
-            export ADMIN_PW_FILE_IN_CONTAINER="/mattermost/config/bootstrap_admin_password"
-
-            sudo mkdir -p "$STACK_DIR" "$SECRETS_DIR"
-            sudo chown -R "$USER":"$USER" "$STACK_DIR"
-
-            if [ ! -d "$STACK_DIR/.git" ]; then
-              if [ -d "$STACK_DIR" ] && [ -n "$(ls -A "$STACK_DIR" 2>/dev/null)" ]; then
-                echo "Warning: $STACK_DIR exists but is not a git repo. Removing and re-cloning."
-                rm -rf "$STACK_DIR"
-              fi
-              git clone --depth=1 https://github.com/$REPO "$STACK_DIR"
-            else
-              cd "$STACK_DIR"
-              git fetch --depth=1 origin "$BRANCH"
-              git reset --hard FETCH_HEAD
-            fi
-            cd "$STACK_DIR"
-
-            if [ -n "$MM_ADMIN_PASSWORD" ]; then
-              echo "Using MM_ADMIN_PASSWORD from GitHub Secrets."
-              printf "%s" "$MM_ADMIN_PASSWORD" > "$ADMIN_PW_FILE_HOST"
-              chmod 600 "$ADMIN_PW_FILE_HOST"
-            else
-              if [ -f "$ADMIN_PW_FILE_HOST" ]; then
-                export MM_ADMIN_PASSWORD="$(cat "$ADMIN_PW_FILE_HOST")"
-                echo "Reusing existing generated admin password from $ADMIN_PW_FILE_HOST"
-              else
-                export MM_ADMIN_PASSWORD="$(openssl rand -base64 36 | tr -d '\n' | tr '+/' '-_' | cut -c1-24)"
-                printf "%s" "$MM_ADMIN_PASSWORD" > "$ADMIN_PW_FILE_HOST"
-                chmod 600 "$ADMIN_PW_FILE_HOST"
-                echo "Generated new admin password and stored at $ADMIN_PW_FILE_HOST"
-              fi
-            fi
-
-            python3 scripts/update-env.py
-
-            # Copy SSL certificates from Let's Encrypt (where certbot stores them) to repo dir
-            mkdir -p certs
-            if [ -d "/etc/letsencrypt/live/${WEBHOOK_DOMAIN}" ]; then
-              cp "/etc/letsencrypt/live/${WEBHOOK_DOMAIN}/fullchain.pem" certs/ 2>/dev/null || true
-              cp "/etc/letsencrypt/live/${WEBHOOK_DOMAIN}/privkey.pem" certs/ 2>/dev/null || true
-            fi
-            if [ ! -f "certs/fullchain.pem" ] || [ ! -f "certs/privkey.pem" ]; then
-              echo "WARNING: SSL certificates not found. Generating self-signed certs for nginx."
-              openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-                -keyout certs/privkey.pem -out certs/fullchain.pem \
-                -subj "/CN=${WEBHOOK_DOMAIN:-localhost}" 2>/dev/null || true
-            fi
-
-            export GHCR_OWNER="${GHCR_OWNER:-naonao89}"
-
-            # ─── Smart pull: only pull services that were NOT rebuilt ────
-            # Services that were rebuilt already have the latest image pushed to GHCR.
-            # Services that were skipped need their existing GHCR image pulled.
-            PULL_SERVICES=()
-
-            if [ "$BUILD_CUSTOMER" != "success" ]; then
-              PULL_SERVICES+=("customer-service")
-              echo "[SKIP BUILD] customer-service unchanged — will pull existing GHCR image"
-            else
-              echo "[BUILD] customer-service was rebuilt — using pushed image"
-            fi
-
-            if [ "$BUILD_MESSAGE" != "success" ]; then
-              PULL_SERVICES+=("message-service")
-              echo "[SKIP BUILD] message-service unchanged — will pull existing GHCR image"
-            else
-              echo "[BUILD] message-service was rebuilt — using pushed image"
-            fi
-
-            if [ "$BUILD_FACEBOOK" != "success" ]; then
-              PULL_SERVICES+=("facebook-graph-service")
-              echo "[SKIP BUILD] facebook-graph-service unchanged — will pull existing GHCR image"
-            else
-              echo "[BUILD] facebook-graph-service was rebuilt — using pushed image"
-            fi
-
-            if [ "$BUILD_MM_BRIDGE_BOT" != "success" ]; then
-              PULL_SERVICES+=("mm-bridge-bot")
-              echo "[SKIP BUILD] mm-bridge-bot unchanged — will pull existing GHCR image"
-            else
-              echo "[BUILD] mm-bridge-bot was rebuilt — using pushed image"
-            fi
-
-            echo "Pulling ALL service images from GHCR..."
-            docker compose pull 2>/dev/null || echo "Warning: docker compose pull had errors (continuing)"
-
-            docker compose down --remove-orphans --timeout 30 || echo "Warning: docker compose down failed (continuing)"
-
-            # Nuclear cleanup: stop ALL containers on this dedicated deploy VPS
-            # This handles port conflicts from previous deploys with different compose project names
-            echo "Stopping all containers on VPS..."
-            docker stop $(docker ps -q) 2>/dev/null || true
-            docker rm -f $(docker ps -aq) 2>/dev/null || true
-
-            sleep 5
-
-            echo "Running docker compose up -d --force-recreate..."
-            if ! docker compose up -d --force-recreate; then
-              echo "ERROR: docker compose up failed!"
-              docker compose ps
-              docker compose logs --tail=20
-              exit 1
-            fi
-            echo "docker compose up -d completed successfully"
-
-            echo "Waiting for containers to be created..."
-            for i in $(seq 1 30); do
-              RUNNING=$(docker compose ps --format '{{.Names}}' 2>/dev/null | wc -l)
-              if [ "$RUNNING" -ge 10 ]; then
-                echo "All $RUNNING containers created, waiting for startup..."
-                break
-              fi
-              echo "Waiting... ($i/30) containers running: $RUNNING"
-              sleep 2
-            done
-
-            echo "Waiting additional 60s for services to initialize..."
-            sleep 60
-
-            echo "=== DEBUG: service containers ==="
-            docker compose logs customer-service 2>&1 | tail -30
-            docker compose logs message-service 2>&1 | tail -30
-            docker compose logs facebook-graph-service 2>&1 | tail -30
-
-            echo "=== DEBUG: nginx container ==="
-            docker compose ps nginx
-            docker compose logs nginx 2>&1 | tail -20
-            ss -tlnp 'sport = :80' 2>/dev/null || echo "Port 80 not listening"
-            ss -tlnp 'sport = :443' 2>/dev/null || echo "Port 443 not listening"
-
-            MM_CONTAINER_ID="$(docker compose ps -q mattermost)"
-            if [ -n "$MM_CONTAINER_ID" ]; then
-              echo "Admin password stored on server at: $ADMIN_PW_FILE_HOST"
-            else
-              echo "WARNING: Could not find Mattermost container"
-            fi
-
-            bash ./scripts/bootstrap-mm.sh
-
-            # Post-deploy health checks
-            echo ""
-            echo "=== Post-Deploy Health Check ==="
-            echo ""
-
-            # Wait for containers to start and initialize
-            sleep 15
-
-            # Check all containers are running
-            echo "Container status:"
-            docker compose ps
-
-            # Verify each service via Docker healthcheck
-            echo ""
-            echo "Service health checks:"
-
-            HEALTH_CHECK_FAILED=false
-
-            for service in customer-service message-service facebook-graph-service mm-bridge-bot; do
-              for attempt in $(seq 1 12); do
-                CONTAINER_ID=$(docker compose ps -q "$service" 2>/dev/null || true)
-                if [ -n "$CONTAINER_ID" ]; then
-                  CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_ID" 2>/dev/null || echo "no-healthcheck")
-                  if [ "$CONTAINER_STATUS" = "healthy" ] || [ "$CONTAINER_STATUS" = "no-healthcheck" ]; then
-                    echo "[PASS] $service: ready"
-                    break
-                  elif [ "$CONTAINER_STATUS" = "unhealthy" ]; then
-                    echo "[FAIL] $service: unhealthy"
-                    docker compose logs --tail=5 "$service"
-                    break
-                  fi
-                fi
-                if [ $attempt -eq 12 ]; then
-                  echo "[FAIL] $service: not healthy after 12 attempts"
-                else
-                  echo "[WAIT] $service: attempt $attempt/12"
-                  sleep 5
-                fi
-              done
-            done
-
-            # Check Mattermost
-            MM_CONTAINER_ID="$(docker compose ps -q mattermost)"
-            if [ -n "$MM_CONTAINER_ID" ]; then
-              echo "[PASS] mattermost: running"
-            else
-              echo "[WARN] mattermost: NOT running (continuing anyway)"
-            fi
-
-            echo ""
-            echo "=== Reloading nginx to refresh upstream DNS ==="
-            docker exec mattermost-nginx-1 nginx -s reload 2>/dev/null || echo "Warning: nginx reload failed"
-
-            echo "=== Deploy complete (health check failures are non-fatal) ==="
-            exit 0
-          EOF
+          )
+          ssh -i ~/.ssh/deploy_key -o ServerAliveInterval=30 -o ServerAliveCountMax=120 ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cat > /tmp/deploy-env.sh" <<< "$DEPLOY_ENV"
+          scp -i ~/.ssh/deploy_key scripts/deploy.sh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/tmp/deploy.sh
+          ssh -i ~/.ssh/deploy_key -o ServerAliveInterval=30 -o ServerAliveCountMax=120 ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /tmp/deploy-env.sh && bash /tmp/deploy.sh"

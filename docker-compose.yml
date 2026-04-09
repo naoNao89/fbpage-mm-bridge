@@ -246,4 +246,3 @@ volumes:
 networks:
   fbpage-mm-network:
     name: mattermost_fbpage-mm-network
-    external: true
