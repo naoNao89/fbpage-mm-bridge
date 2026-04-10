@@ -36,6 +36,7 @@ pub struct MattermostClient {
 
     channel_cache: Arc<Mutex<HashMap<String, String>>>, // conversation_id -> channel_id
     root_cache: Arc<Mutex<HashMap<String, String>>>,    // conversation_id -> root_post_id
+    display_name_cache: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl MattermostClient {
@@ -50,6 +51,7 @@ impl MattermostClient {
             pool: None,
             channel_cache: Arc::new(Mutex::new(HashMap::new())),
             root_cache: Arc::new(Mutex::new(HashMap::new())),
+            display_name_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -196,7 +198,6 @@ impl MattermostClient {
         conversation_id: &str,
         display_name: &str,
     ) -> Result<String> {
-        // Check cache first
         if let Some(cid) = self
             .channel_cache
             .lock()
@@ -343,6 +344,7 @@ impl MattermostClient {
                 .json()
                 .await
                 .context("Failed to parse channel create response")?;
+            let _ = self.ensure_bot_membership(&ch.id).await;
             return Ok(ch.id);
         }
 
@@ -362,6 +364,7 @@ impl MattermostClient {
 
         if let Some(cid) = self.fetch_channel_by_name(team_id, name).await? {
             tracing::info!("Resolved existing channel {} via name lookup", name);
+            let _ = self.ensure_bot_membership(&cid).await;
             return Ok(cid);
         }
 
@@ -377,11 +380,13 @@ impl MattermostClient {
                 "Resolved existing channel {} via team channel listing",
                 name
             );
+            let _ = self.ensure_bot_membership(&ch.id).await;
             return Ok(ch.id);
         }
 
         if let Some(cid) = self.restore_deleted_channel(team_id, name).await? {
             tracing::info!("Restored deleted channel {} and got ID {}", name, cid);
+            let _ = self.ensure_bot_membership(&cid).await;
             return Ok(cid);
         }
 
@@ -626,6 +631,137 @@ impl MattermostClient {
             .expect("channel_cache poisoned")
             .insert(conversation_id.to_string(), channel_id.to_string());
         self.persist_cache_entry("channel", conversation_id, channel_id);
+    }
+
+    fn set_display_name_cache(&self, conversation_id: &str, display_name: &str) {
+        self.display_name_cache
+            .lock()
+            .expect("display_name_cache poisoned")
+            .insert(conversation_id.to_string(), display_name.to_string());
+    }
+
+    pub async fn maybe_update_display_name(
+        &self,
+        channel_id: &str,
+        conversation_id: &str,
+        desired_display_name: &str,
+    ) -> Result<()> {
+        if desired_display_name.is_empty() {
+            return Ok(());
+        }
+
+        let cached = self
+            .display_name_cache
+            .lock()
+            .expect("display_name_cache poisoned")
+            .get(conversation_id)
+            .cloned();
+
+        if cached.as_deref() == Some(desired_display_name) {
+            return Ok(());
+        }
+
+        if let Err(e) = self
+            .update_channel_display_name(channel_id, desired_display_name)
+            .await
+        {
+            tracing::warn!("Failed to update display_name for channel {channel_id}: {e}");
+        } else {
+            self.set_display_name_cache(conversation_id, desired_display_name);
+        }
+
+        Ok(())
+    }
+
+    pub async fn update_channel_display_name(
+        &self,
+        channel_id: &str,
+        display_name: &str,
+    ) -> Result<()> {
+        let auth = self.get_auth_header().await?;
+        let url = format!("{}/api/v4/channels/{channel_id}/patch", self.base_url);
+        let payload = serde_json::json!({
+            "display_name": display_name,
+        });
+
+        let resp = self
+            .client
+            .put(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to update channel display_name")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "Mattermost display_name update failed {status}: {body}"
+            ));
+        }
+
+        tracing::info!("Updated display_name for channel {channel_id} to '{display_name}'");
+        Ok(())
+    }
+
+    pub async fn ensure_bot_membership(&self, channel_id: &str) -> Result<()> {
+        let auth = self.get_auth_header().await?;
+        let bot_user_id = self.resolve_bot_user_id().await?;
+
+        let url = format!("{}/api/v4/channels/{channel_id}/members", self.base_url);
+        let payload = serde_json::json!({
+            "user_id": bot_user_id,
+        });
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to add bot to channel")?;
+
+        if resp.status().is_success() {
+            tracing::info!("Added bot user to channel {channel_id}");
+        } else if resp.status().as_u16() == 400 {
+            tracing::debug!("Bot already a member of channel {channel_id}");
+        } else {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            tracing::warn!("Could not add bot to channel {channel_id}: {status} {body}");
+        }
+
+        Ok(())
+    }
+
+    async fn resolve_bot_user_id(&self) -> Result<String> {
+        let auth = self.get_auth_header().await?;
+        let url = format!("{}/api/v4/users/username/{}", self.base_url, self.username);
+
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await
+            .context("Failed to fetch bot user ID")?;
+
+        if resp.status().is_success() {
+            let user: serde_json::Value =
+                resp.json().await.context("Failed to parse user response")?;
+            user.get("id")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .ok_or_else(|| anyhow::anyhow!("No user ID in response"))
+        } else {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            Err(anyhow::anyhow!(
+                "Failed to resolve bot user ID: {status} {body}"
+            ))
+        }
     }
 
     fn persist_cache_entry(&self, key_type: &str, conversation_id: &str, value: &str) {

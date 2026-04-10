@@ -115,8 +115,15 @@ pub async fn webhook_handler(
                     };
                     let _ = state.message_client.store_message(payload).await;
 
-                    let _ = post_to_mattermost(&state, conversation_id, &text, msg.mid.as_deref())
-                        .await;
+                    let display_name = customer.name.as_deref().unwrap_or(conversation_id);
+                    let _ = post_to_mattermost(
+                        &state,
+                        conversation_id,
+                        &text,
+                        msg.mid.as_deref(),
+                        display_name,
+                    )
+                    .await;
                 }
             }
         }
@@ -130,6 +137,7 @@ async fn post_to_mattermost(
     conversation_id: &str,
     text: &str,
     root_id: Option<&str>,
+    display_name: &str,
 ) -> Result<(), anyhow::Error> {
     let mm = &state.mattermost_client;
     let team_id = match mm.get_team_id().await {
@@ -143,9 +151,12 @@ async fn post_to_mattermost(
         }
     };
     if let Ok(channel_id) = mm
-        .get_or_create_channel(&team_id, conversation_id, conversation_id)
+        .get_or_create_channel(&team_id, conversation_id, display_name)
         .await
     {
+        let _ = mm
+            .maybe_update_display_name(&channel_id, conversation_id, display_name)
+            .await;
         let root = if let Some(r) = root_id {
             Some(r.to_string())
         } else {
@@ -580,10 +591,14 @@ pub async fn process_conversation(
                 let mm = &state.mattermost_client;
                 // Ensure token and fetch team/channel, post message
                 if let Ok(team_id) = mm.get_team_id().await {
+                    let display_name = customer.name.as_deref().unwrap_or(conversation_id);
                     if let Ok(channel_id) = mm
-                        .get_or_create_channel(&team_id, conversation_id, conversation_id)
+                        .get_or_create_channel(&team_id, conversation_id, display_name)
                         .await
                     {
+                        let _ = mm
+                            .maybe_update_display_name(&channel_id, conversation_id, display_name)
+                            .await;
                         let root_id_opt = mm.get_root_id(conversation_id).await?;
                         let root_id_slice = root_id_opt.as_deref();
                         match mm
