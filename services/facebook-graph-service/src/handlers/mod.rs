@@ -164,8 +164,8 @@ async fn post_to_mattermost(
 
         if direction == "incoming" {
             if let Some(psid) = customer_platform_id {
-                match mm.get_or_create_customer_bot(psid, display_name).await {
-                    Ok((_bot_user_id, bot_token)) => {
+                match mm.get_or_create_customer_bot(psid, display_name, &channel_id).await {
+                    Ok((bot_user_id, bot_token)) => {
                         let root = if let Some(r) = root_id {
                             Some(r.to_string())
                         } else {
@@ -177,6 +177,7 @@ async fn post_to_mattermost(
                                 text,
                                 root.as_deref(),
                                 None,
+                                &bot_user_id,
                                 &bot_token,
                             )
                             .await
@@ -674,14 +675,15 @@ pub async fn process_conversation(
                         let ts = Some(msg.created_time.timestamp_millis());
 
                         if direction == "incoming" {
-                            match mm.get_or_create_customer_bot(&cust_id, display_name).await {
-                                Ok((_bot_uid, bot_token)) => {
+                            match mm.get_or_create_customer_bot(&cust_id, display_name, &channel_id).await {
+                                Ok((bot_uid, bot_token)) => {
                                     match mm
                                         .post_message_as_bot(
                                             &channel_id,
                                             msg_text,
                                             root_id_slice,
                                             ts,
+                                            &bot_uid,
                                             &bot_token,
                                         )
                                         .await

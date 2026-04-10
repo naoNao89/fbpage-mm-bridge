@@ -643,23 +643,31 @@ impl MattermostClient {
         &self,
         platform_user_id: &str,
         display_name: &str,
+        channel_id: &str,
     ) -> Result<(String, String)> {
-        if let Some(bot_user_id) = self
-            .bot_user_cache
-            .lock()
-            .expect("bot_user_cache poisoned")
-            .get(platform_user_id)
-            .cloned()
-        {
-            if let Some(token) = self
-                .bot_token_cache
+        let cached = {
+            let uid = self
+                .bot_user_cache
                 .lock()
-                .expect("bot_token_cache poisoned")
-                .get(&bot_user_id)
-                .cloned()
-            {
-                return Ok((bot_user_id, token));
+                .expect("bot_user_cache poisoned")
+                .get(platform_user_id)
+                .cloned();
+            let token = uid.as_ref().and_then(|id| {
+                self.bot_token_cache
+                    .lock()
+                    .expect("bot_token_cache poisoned")
+                    .get(id)
+                    .cloned()
+            });
+            uid.zip(token)
+        };
+
+        if let Some((bot_user_id, token)) = cached {
+            let auth = self.get_auth_header().await.ok();
+            if let Some(auth) = &auth {
+                let _ = self.add_user_to_channel(channel_id, &bot_user_id, auth).await;
             }
+            return Ok((bot_user_id, token));
         }
 
         let auth = self.get_auth_header().await?;
@@ -700,7 +708,9 @@ impl MattermostClient {
             }
         };
 
-        let _ = self.enable_bot_and_add_to_team(&bot_user_id, &team_id, &auth).await;
+        if let Err(e) = self.enable_bot_and_add_to_team(&bot_user_id, &team_id, channel_id, &auth).await {
+            tracing::warn!("Bot enable/team/channel setup failed for {slug}: {e}, will retry channel add later");
+        }
 
         let token_url = format!(
             "{}/api/v4/users/{bot_user_id}/tokens",
@@ -740,6 +750,10 @@ impl MattermostClient {
             .expect("bot_token_cache poisoned")
             .insert(bot_user_id.clone(), bot_token.clone());
 
+        tracing::info!("Created customer bot {slug} (user_id={bot_user_id}) for channel {channel_id}");
+
+        let _ = self.add_user_to_channel(channel_id, &bot_user_id, &auth).await;
+
         Ok((bot_user_id, bot_token))
     }
 
@@ -772,15 +786,32 @@ impl MattermostClient {
         &self,
         bot_user_id: &str,
         team_id: &str,
+        channel_id: &str,
         auth: &str,
     ) -> Result<()> {
         let enable_url = format!("{}/api/v4/bots/{bot_user_id}/enable", self.base_url);
-        let _ = self
+        let enable_resp = self
             .client
             .post(&enable_url)
             .header("Authorization", format!("Bearer {auth}"))
             .send()
             .await;
+
+        match enable_resp {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::info!("Enabled bot {bot_user_id}");
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                if !body.contains("already enabled") {
+                    tracing::warn!("Failed to enable bot {bot_user_id}: {status} {body}");
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to enable bot {bot_user_id}: {e}");
+            }
+        }
 
         let team_member_url = format!(
             "{}/api/v4/teams/{team_id}/members",
@@ -790,13 +821,31 @@ impl MattermostClient {
             "user_id": bot_user_id,
             "team_id": team_id,
         });
-        let _ = self
+        let team_resp = self
             .client
             .post(&team_member_url)
             .header("Authorization", format!("Bearer {auth}"))
             .json(&team_payload)
             .send()
             .await;
+
+        match team_resp {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::info!("Added bot {bot_user_id} to team {team_id}");
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                if !body.contains("already exists") && !body.contains("team_member") {
+                    tracing::warn!("Failed to add bot {bot_user_id} to team {team_id}: {status} {body}");
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to add bot {bot_user_id} to team {team_id}: {e}");
+            }
+        }
+
+        self.add_user_to_channel(channel_id, bot_user_id, auth).await?;
 
         Ok(())
     }
@@ -807,6 +856,7 @@ impl MattermostClient {
         message: &str,
         root_id: Option<&str>,
         create_at: Option<i64>,
+        bot_user_id: &str,
         bot_token: &str,
     ) -> Result<String> {
         if message.trim().is_empty() {
@@ -840,14 +890,41 @@ impl MattermostClient {
             .await
             .context("Failed to post message as bot")?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Bot post failed {status}: {body}"));
+        if resp.status().is_success() {
+            let post: PostResponse = resp.json().await.context("Failed to parse post response")?;
+            return Ok(post.id);
         }
 
-        let post: PostResponse = resp.json().await.context("Failed to parse post response")?;
-        Ok(post.id)
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+
+        if status.as_u16() == 403 {
+            tracing::warn!("Bot {bot_user_id} got 403 posting to channel {channel_id}, re-adding to channel and retrying");
+
+            let auth = self.get_auth_header().await?;
+            let _ = self.add_user_to_channel(channel_id, bot_user_id, &auth).await;
+
+            let retry_resp = self
+                .client
+                .post(&url)
+                .header("Authorization", format!("Bearer {bot_token}"))
+                .json(&payload)
+                .send()
+                .await
+                .context("Failed to retry post message as bot")?;
+
+            if retry_resp.status().is_success() {
+                let post: PostResponse = retry_resp.json().await.context("Failed to parse post response")?;
+                tracing::info!("Bot {bot_user_id} retry post succeeded to channel {channel_id}");
+                return Ok(post.id);
+            }
+
+            let retry_status = retry_resp.status();
+            let retry_body = retry_resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Bot post failed after retry {retry_status}: {retry_body}"));
+        }
+
+        Err(anyhow::anyhow!("Bot post failed {status}: {body}"))
     }
 
     fn set_channel_cache(&self, conversation_id: &str, channel_id: &str) {
@@ -933,10 +1010,18 @@ impl MattermostClient {
     pub async fn ensure_bot_membership(&self, channel_id: &str) -> Result<()> {
         let auth = self.get_auth_header().await?;
         let bot_user_id = self.resolve_bot_user_id().await?;
+        self.add_user_to_channel(channel_id, &bot_user_id, &auth).await
+    }
 
+    async fn add_user_to_channel(
+        &self,
+        channel_id: &str,
+        user_id: &str,
+        auth: &str,
+    ) -> Result<()> {
         let url = format!("{}/api/v4/channels/{channel_id}/members", self.base_url);
         let payload = serde_json::json!({
-            "user_id": bot_user_id,
+            "user_id": user_id,
         });
 
         let resp = self
@@ -946,16 +1031,16 @@ impl MattermostClient {
             .json(&payload)
             .send()
             .await
-            .context("Failed to add bot to channel")?;
+            .context("Failed to add user to channel")?;
 
         if resp.status().is_success() {
-            tracing::info!("Added bot user to channel {channel_id}");
+            tracing::info!("Added user {user_id} to channel {channel_id}");
         } else if resp.status().as_u16() == 400 {
-            tracing::debug!("Bot already a member of channel {channel_id}");
+            tracing::debug!("User {user_id} already a member of channel {channel_id}");
         } else {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            tracing::warn!("Could not add bot to channel {channel_id}: {status} {body}");
+            tracing::warn!("Could not add user {user_id} to channel {channel_id}: {status} {body}");
         }
 
         Ok(())

@@ -156,10 +156,10 @@ async fn poll_conversation_new_messages(
                 let customer_name_str = customer.name.as_deref().unwrap_or(conversation_id);
 
                 if direction == "incoming" {
-                    match mm.get_or_create_customer_bot(&cust_id, customer_name_str).await {
-                        Ok((_bot_uid, bot_token)) => {
+                    match mm.get_or_create_customer_bot(&cust_id, customer_name_str, &channel_id).await {
+                        Ok((bot_uid, bot_token)) => {
                             match mm
-                                .post_message_as_bot(&channel_id, text, msg_root, ts, &bot_token)
+                                .post_message_as_bot(&channel_id, text, msg_root, ts, &bot_uid, &bot_token)
                                 .await
                             {
                                 Ok(post_id) => {
