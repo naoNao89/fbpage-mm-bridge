@@ -370,3 +370,51 @@ pub async fn update_conversation_import_error(
 
     Ok(())
 }
+
+// Mattermost Cache Operations
+
+/// Load all cache entries of a given key_type ('channel' or 'root') into a HashMap.
+pub async fn load_mm_cache(
+    pool: &PgPool,
+    key_type: &str,
+) -> anyhow::Result<std::collections::HashMap<String, String>> {
+    let rows = sqlx::query_as::<_, (String, String)>(
+        r#"
+        SELECT conversation_id, value
+        FROM mattermost_cache
+        WHERE key_type = $1
+        "#,
+    )
+    .bind(key_type)
+    .fetch_all(pool)
+    .await
+    .context("Failed to load mattermost cache")?;
+
+    Ok(rows.into_iter().collect())
+}
+
+/// Upsert a single cache entry.
+pub async fn upsert_mm_cache(
+    pool: &PgPool,
+    key_type: &str,
+    conversation_id: &str,
+    value: &str,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO mattermost_cache (key_type, conversation_id, value, created_at, updated_at)
+        VALUES ($1, $2, $3, NOW(), NOW())
+        ON CONFLICT (key_type, conversation_id) DO UPDATE SET
+            value = EXCLUDED.value,
+            updated_at = NOW()
+        "#,
+    )
+    .bind(key_type)
+    .bind(conversation_id)
+    .bind(value)
+    .execute(pool)
+    .await
+    .context("Failed to upsert mattermost cache entry")?;
+
+    Ok(())
+}

@@ -26,7 +26,9 @@ async fn main() -> anyhow::Result<()> {
         &config.mattermost_url,
         &config.mattermost_username,
         config.mattermost_password.as_deref(),
-    );
+    )
+    .with_db_pool(pool.clone())
+    .await;
 
     let state = AppState {
         pool: pool.clone(),
