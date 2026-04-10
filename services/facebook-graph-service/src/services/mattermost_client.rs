@@ -210,6 +210,63 @@ impl MattermostClient {
         }
     }
 
+    /// Search deleted channels in a team for a channel with the given name.
+    /// Mattermost soft-deletes channels, preventing recreation with the same name.
+    /// Returns the channel ID if found and successfully restored.
+    async fn restore_deleted_channel(&self, team_id: &str, name: &str) -> Result<Option<String>> {
+        let auth = self.get_auth_header().await?;
+        let url = format!(
+            "{}/api/v4/teams/{team_id}/channels/deleted",
+            self.base_url
+        );
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await
+            .context("Failed to list deleted channels")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            tracing::warn!("Cannot list deleted channels: {status} {body}");
+            return Ok(None);
+        }
+
+        let deleted: Vec<ChannelInfo> = resp
+            .json()
+            .await
+            .context("Failed to parse deleted channels response")?;
+
+        let found = deleted.into_iter().find(|c| c.name == name);
+        let Some(ch) = found else {
+            return Ok(None);
+        };
+
+        tracing::info!("Found deleted channel {name} (id={}), restoring", ch.id);
+        let restore_url = format!("{}/api/v4/channels/{}/restore", self.base_url, ch.id);
+        let restore_resp = self
+            .client
+            .post(&restore_url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await
+            .context("Failed to restore deleted channel")?;
+
+        if restore_resp.status().is_success() {
+            let restored: ChannelResponse =
+                restore_resp.json().await.context("Failed to parse restored channel")?;
+            tracing::info!("Restored deleted channel {name} (id={})", restored.id);
+            Ok(Some(restored.id))
+        } else {
+            let status = restore_resp.status();
+            let body = restore_resp.text().await.unwrap_or_default();
+            tracing::warn!("Failed to restore channel {name}: {status} {body}");
+            Ok(None)
+        }
+    }
+
     /// Create a channel, handling the race condition where another process
     /// may have created it between our lookup and create attempt. Falls back
     /// to team-level search if the re-fetch by name fails (e.g. bot not yet
@@ -273,6 +330,11 @@ impl MattermostClient {
         if let Some(ch) = found {
             tracing::info!("Resolved existing channel {} via team channel listing", name);
             return Ok(ch.id);
+        }
+
+        if let Some(cid) = self.restore_deleted_channel(team_id, name).await? {
+            tracing::info!("Restored deleted channel {} and got ID {}", name, cid);
+            return Ok(cid);
         }
 
         tracing::warn!(
