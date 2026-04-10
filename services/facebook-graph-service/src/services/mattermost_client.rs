@@ -68,7 +68,11 @@ impl MattermostClient {
             .context("Failed to send login request to Mattermost")?;
 
         let status = resp.status();
-        let token_from_header = resp.headers().get("Token").and_then(|h| h.to_str().ok()).map(String::from);
+        let token_from_header = resp
+            .headers()
+            .get("Token")
+            .and_then(|h| h.to_str().ok())
+            .map(String::from);
         let body_text = resp.text().await.unwrap_or_default();
 
         if !status.is_success() {
@@ -77,11 +81,17 @@ impl MattermostClient {
             ));
         }
 
-        let token = token_from_header.or_else(|| {
-            serde_json::from_str::<serde_json::Value>(&body_text)
-                .ok()
-                .and_then(|j| j.get("token").and_then(|v| v.as_str()).map(String::from))
-        }).ok_or_else(|| anyhow::anyhow!("Mattermost login succeeded but no token in response header or body"))?;
+        let token = token_from_header
+            .or_else(|| {
+                serde_json::from_str::<serde_json::Value>(&body_text)
+                    .ok()
+                    .and_then(|j| j.get("token").and_then(|v| v.as_str()).map(String::from))
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Mattermost login succeeded but no token in response header or body"
+                )
+            })?;
 
         let mut tok = self.token.lock().expect("token lock poisoned");
         *tok = Some(token);
@@ -172,7 +182,9 @@ impl MattermostClient {
             return Ok(cid);
         }
 
-        let cid = self.create_channel_with_retry(team_id, &name, display_name).await?;
+        let cid = self
+            .create_channel_with_retry(team_id, &name, display_name)
+            .await?;
         self.channel_cache
             .lock()
             .unwrap()
@@ -198,8 +210,10 @@ impl MattermostClient {
             .context("Failed to query channel by name")?;
 
         if resp.status().is_success() {
-            let ch: ChannelResponse =
-                resp.json().await.context("Failed to parse channel response")?;
+            let ch: ChannelResponse = resp
+                .json()
+                .await
+                .context("Failed to parse channel response")?;
             Ok(Some(ch.id))
         } else if resp.status().as_u16() == 404 {
             Ok(None)
@@ -215,10 +229,7 @@ impl MattermostClient {
     /// Returns the channel ID if found and successfully restored.
     async fn restore_deleted_channel(&self, team_id: &str, name: &str) -> Result<Option<String>> {
         let auth = self.get_auth_header().await?;
-        let url = format!(
-            "{}/api/v4/teams/{team_id}/channels/deleted",
-            self.base_url
-        );
+        let url = format!("{}/api/v4/teams/{team_id}/channels/deleted", self.base_url);
         let resp = self
             .client
             .get(&url)
@@ -255,8 +266,10 @@ impl MattermostClient {
             .context("Failed to restore deleted channel")?;
 
         if restore_resp.status().is_success() {
-            let restored: ChannelResponse =
-                restore_resp.json().await.context("Failed to parse restored channel")?;
+            let restored: ChannelResponse = restore_resp
+                .json()
+                .await
+                .context("Failed to parse restored channel")?;
             tracing::info!("Restored deleted channel {name} (id={})", restored.id);
             Ok(Some(restored.id))
         } else {
@@ -313,7 +326,10 @@ impl MattermostClient {
             ));
         }
 
-        tracing::info!("Channel {} already exists (race condition), resolving ID", name);
+        tracing::info!(
+            "Channel {} already exists (race condition), resolving ID",
+            name
+        );
 
         if let Some(cid) = self.fetch_channel_by_name(team_id, name).await? {
             tracing::info!("Resolved existing channel {} via name lookup", name);
@@ -328,7 +344,10 @@ impl MattermostClient {
         let found = channels.into_iter().find(|c| c.name == name);
 
         if let Some(ch) = found {
-            tracing::info!("Resolved existing channel {} via team channel listing", name);
+            tracing::info!(
+                "Resolved existing channel {} via team channel listing",
+                name
+            );
             return Ok(ch.id);
         }
 
@@ -456,7 +475,8 @@ impl MattermostClient {
             .await
             .context("Failed to parse Mattermost posts response")?;
 
-        let mut posts: Vec<MattermostPost> = posts_response.order
+        let mut posts: Vec<MattermostPost> = posts_response
+            .order
             .iter()
             .filter_map(|id| posts_response.posts.get(id))
             .cloned()

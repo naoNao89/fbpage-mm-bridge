@@ -91,11 +91,7 @@ pub async fn webhook_handler(
                 (sender_id, recipient_id)
             };
 
-            let direction = if is_echo {
-                "outgoing"
-            } else {
-                "incoming"
-            };
+            let direction = if is_echo { "outgoing" } else { "incoming" };
 
             let text = msg
                 .text
@@ -139,7 +135,10 @@ async fn post_to_mattermost(
     let team_id = match mm.get_team_id().await {
         Ok(id) => id,
         Err(e) => {
-            warn!("Could not determine Mattermost team_id for conversation {}: {e}", conversation_id);
+            warn!(
+                "Could not determine Mattermost team_id for conversation {}: {e}",
+                conversation_id
+            );
             return Ok(());
         }
     };

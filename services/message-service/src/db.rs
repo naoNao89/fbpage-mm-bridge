@@ -133,12 +133,11 @@ pub async fn get_customer_id_by_conversation(
     pool: &PgPool,
     conversation_id: &str,
 ) -> Result<Option<Uuid>> {
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        r#"SELECT customer_id FROM messages WHERE conversation_id = $1 LIMIT 1"#,
-    )
-    .bind(conversation_id)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(Uuid,)> =
+        sqlx::query_as(r#"SELECT customer_id FROM messages WHERE conversation_id = $1 LIMIT 1"#)
+            .bind(conversation_id)
+            .fetch_optional(pool)
+            .await?;
 
     Ok(row.map(|(id,)| id))
 }

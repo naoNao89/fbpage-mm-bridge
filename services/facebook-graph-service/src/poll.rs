@@ -28,11 +28,7 @@ async fn poll_recent_conversations(
     state: &AppState,
     since: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<usize> {
-    let conversations = crate::graph_api::get_recent_conversations(
-        &state.config,
-        since,
-    )
-    .await?;
+    let conversations = crate::graph_api::get_recent_conversations(&state.config, since).await?;
 
     if conversations.is_empty() {
         return Ok(0);
@@ -58,10 +54,7 @@ async fn poll_recent_conversations(
                 total_posted += count;
             }
             Err(e) => {
-                warn!(
-                    "Poller: failed to process conversation {}: {}",
-                    conv.id, e
-                );
+                warn!("Poller: failed to process conversation {}: {}", conv.id, e);
             }
         }
 
