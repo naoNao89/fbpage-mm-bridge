@@ -47,7 +47,10 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(async move {
             facebook_graph_service::poll::run_poller(poll_state, poll_interval).await;
         });
-        info!("Real-time poller started (interval: {}s)", config.poll_interval_secs);
+        info!(
+            "Real-time poller started (interval: {}s)",
+            config.poll_interval_secs
+        );
     }
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -55,4 +58,3 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
-

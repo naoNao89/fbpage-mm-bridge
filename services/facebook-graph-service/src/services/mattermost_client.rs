@@ -68,7 +68,11 @@ impl MattermostClient {
             .context("Failed to send login request to Mattermost")?;
 
         let status = resp.status();
-        let token_from_header = resp.headers().get("Token").and_then(|h| h.to_str().ok()).map(String::from);
+        let token_from_header = resp
+            .headers()
+            .get("Token")
+            .and_then(|h| h.to_str().ok())
+            .map(String::from);
         let body_text = resp.text().await.unwrap_or_default();
 
         if !status.is_success() {
@@ -77,11 +81,17 @@ impl MattermostClient {
             ));
         }
 
-        let token = token_from_header.or_else(|| {
-            serde_json::from_str::<serde_json::Value>(&body_text)
-                .ok()
-                .and_then(|j| j.get("token").and_then(|v| v.as_str()).map(String::from))
-        }).ok_or_else(|| anyhow::anyhow!("Mattermost login succeeded but no token in response header or body"))?;
+        let token = token_from_header
+            .or_else(|| {
+                serde_json::from_str::<serde_json::Value>(&body_text)
+                    .ok()
+                    .and_then(|j| j.get("token").and_then(|v| v.as_str()).map(String::from))
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Mattermost login succeeded but no token in response header or body"
+                )
+            })?;
 
         let mut tok = self.token.lock().expect("token lock poisoned");
         *tok = Some(token);
@@ -115,7 +125,7 @@ impl MattermostClient {
         let resp = self
             .client
             .get(&url)
-            .header("Authorization", format!("Bearer {}", auth))
+            .header("Authorization", format!("Bearer {auth}"))
             .send()
             .await
             .context("Failed to fetch teams from Mattermost")?;
@@ -124,9 +134,7 @@ impl MattermostClient {
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
             return Err(anyhow::anyhow!(
-                "Mattermost get_teams failed with {}: {}",
-                status,
-                body
+                "Mattermost get_teams failed with {status}: {body}"
             ));
         }
 
@@ -141,7 +149,12 @@ impl MattermostClient {
             .ok_or_else(|| anyhow::anyhow!("No teams found in Mattermost"))
     }
 
-    /// Get channel by name or create a new one, returning channel_id
+    /// Get channel by name or create a new one, returning channel_id.
+    ///
+    /// Handles race conditions where another process may create the channel
+    /// between our lookup and our create attempt. Also handles the case where
+    /// the bot user hasn't been added to an existing channel by falling back
+    /// to a team-level channel search.
     pub async fn get_or_create_channel(
         &self,
         team_id: &str,
@@ -159,39 +172,129 @@ impl MattermostClient {
             return Ok(cid);
         }
 
-        let auth = self.get_auth_header().await?;
-
-        // Try to fetch by channel name (requires team_id in path per Mattermost API)
         let name = conversation_id.to_lowercase();
-        let url_name = format!("{}/api/v4/teams/{}/channels/name/{}", self.base_url, team_id, name);
-        let resp = self
-            .client
-            .get(&url_name)
-            .header("Authorization", format!("Bearer {}", auth))
-            .send()
-            .await
-            .context("Failed to query channel by name")?;
-        
-        if resp.status().is_success() {
-            let ch: ChannelResponse =
-                resp.json().await.context("Failed to parse channel response")?;
-            let cid = ch.id;
+
+        if let Some(cid) = self.fetch_channel_by_name(team_id, &name).await? {
             self.channel_cache
                 .lock()
                 .unwrap()
                 .insert(conversation_id.to_string(), cid.clone());
             return Ok(cid);
-        } else if resp.status().as_u16() != 404 {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Channel lookup failed {}: {}", status, body));
         }
 
-        // Create channel if not found
-        let team_id_clone = team_id.to_string();
+        let cid = self
+            .create_channel_with_retry(team_id, &name, display_name)
+            .await?;
+        self.channel_cache
+            .lock()
+            .unwrap()
+            .insert(conversation_id.to_string(), cid.clone());
+        Ok(cid)
+    }
+
+    /// Fetch a channel by name within a team. Returns Ok(Some(id)) if found,
+    /// Ok(None) if 404 (channel doesn't exist or bot not a member), or Err on
+    /// unexpected failures.
+    async fn fetch_channel_by_name(&self, team_id: &str, name: &str) -> Result<Option<String>> {
+        let auth = self.get_auth_header().await?;
+        let url = format!(
+            "{}/api/v4/teams/{team_id}/channels/name/{name}",
+            self.base_url
+        );
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await
+            .context("Failed to query channel by name")?;
+
+        if resp.status().is_success() {
+            let ch: ChannelResponse = resp
+                .json()
+                .await
+                .context("Failed to parse channel response")?;
+            Ok(Some(ch.id))
+        } else if resp.status().as_u16() == 404 {
+            Ok(None)
+        } else {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            Err(anyhow::anyhow!("Channel lookup failed {status}: {body}"))
+        }
+    }
+
+    /// Search deleted channels in a team for a channel with the given name.
+    /// Mattermost soft-deletes channels, preventing recreation with the same name.
+    /// Returns the channel ID if found and successfully restored.
+    async fn restore_deleted_channel(&self, team_id: &str, name: &str) -> Result<Option<String>> {
+        let auth = self.get_auth_header().await?;
+        let url = format!("{}/api/v4/teams/{team_id}/channels/deleted", self.base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await
+            .context("Failed to list deleted channels")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            tracing::warn!("Cannot list deleted channels: {status} {body}");
+            return Ok(None);
+        }
+
+        let deleted: Vec<ChannelInfo> = resp
+            .json()
+            .await
+            .context("Failed to parse deleted channels response")?;
+
+        let found = deleted.into_iter().find(|c| c.name == name);
+        let Some(ch) = found else {
+            return Ok(None);
+        };
+
+        tracing::info!("Found deleted channel {name} (id={}), restoring", ch.id);
+        let restore_url = format!("{}/api/v4/channels/{}/restore", self.base_url, ch.id);
+        let restore_resp = self
+            .client
+            .post(&restore_url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await
+            .context("Failed to restore deleted channel")?;
+
+        if restore_resp.status().is_success() {
+            let restored: ChannelResponse = restore_resp
+                .json()
+                .await
+                .context("Failed to parse restored channel")?;
+            tracing::info!("Restored deleted channel {name} (id={})", restored.id);
+            Ok(Some(restored.id))
+        } else {
+            let status = restore_resp.status();
+            let body = restore_resp.text().await.unwrap_or_default();
+            tracing::warn!("Failed to restore channel {name}: {status} {body}");
+            Ok(None)
+        }
+    }
+
+    /// Create a channel, handling the race condition where another process
+    /// may have created it between our lookup and create attempt. Falls back
+    /// to team-level search if the re-fetch by name fails (e.g. bot not yet
+    /// a member of the newly-created channel).
+    async fn create_channel_with_retry(
+        &self,
+        team_id: &str,
+        name: &str,
+        display_name: &str,
+    ) -> Result<String> {
+        let auth = self.get_auth_header().await?;
+
         let url_create = format!("{}/api/v4/channels", self.base_url);
         let payload = serde_json::json!({
-            "team_id": team_id_clone,
+            "team_id": team_id,
             "name": name,
             "display_name": display_name,
             "type": "O"
@@ -200,53 +303,74 @@ impl MattermostClient {
         let resp = self
             .client
             .post(&url_create)
-            .header("Authorization", format!("Bearer {}", auth))
+            .header("Authorization", format!("Bearer {auth}"))
             .json(&payload)
             .send()
             .await
             .context("Failed to create Mattermost channel")?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            if body.contains("already exists") {
-                tracing::info!("Channel {} already exists, re-fetching", name);
-                let retry_url = format!("{}/api/v4/teams/{}/channels/name/{}", self.base_url, team_id, name);
-                let retry_resp = self
-                    .client
-                    .get(&retry_url)
-                    .header("Authorization", format!("Bearer {}", auth))
-                    .send()
-                    .await
-                    .context("Failed to re-fetch channel after exists error")?;
-                if retry_resp.status().is_success() {
-                    let ch: ChannelResponse = retry_resp.json().await.context("Failed to parse channel response")?;
-                    let cid = ch.id;
-                    self.channel_cache
-                        .lock()
-                        .unwrap()
-                        .insert(conversation_id.to_string(), cid.clone());
-                    tracing::info!("Re-fetched existing channel {}", name);
-                    return Ok(cid);
-                }
-            }
+        if resp.status().is_success() {
+            let ch: ChannelResponse = resp
+                .json()
+                .await
+                .context("Failed to parse channel create response")?;
+            return Ok(ch.id);
+        }
+
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+
+        if !body.contains("already exists") {
             return Err(anyhow::anyhow!(
-                "Mattermost channel create failed {}: {}",
-                status,
-                body
+                "Mattermost channel create failed {status}: {body}"
             ));
         }
 
-        let ch: ChannelResponse = resp
-            .json()
-            .await
-            .context("Failed to parse channel create response")?;
-        let cid = ch.id;
-        self.channel_cache
-            .lock()
-            .unwrap()
-            .insert(conversation_id.to_string(), cid.clone());
-        Ok(cid)
+        tracing::info!(
+            "Channel {} already exists (race condition), resolving ID",
+            name
+        );
+
+        if let Some(cid) = self.fetch_channel_by_name(team_id, name).await? {
+            tracing::info!("Resolved existing channel {} via name lookup", name);
+            return Ok(cid);
+        }
+
+        tracing::info!(
+            "Cannot see channel {} by name (bot may not be a member), searching all team channels",
+            name
+        );
+        let channels = self.list_channels_by_prefix(team_id, name).await?;
+        let found = channels.into_iter().find(|c| c.name == name);
+
+        if let Some(ch) = found {
+            tracing::info!(
+                "Resolved existing channel {} via team channel listing",
+                name
+            );
+            return Ok(ch.id);
+        }
+
+        if let Some(cid) = self.restore_deleted_channel(team_id, name).await? {
+            tracing::info!("Restored deleted channel {} and got ID {}", name, cid);
+            return Ok(cid);
+        }
+
+        tracing::warn!(
+            "Channel {} exists but cannot be resolved — attempting fresh login and retry",
+            name
+        );
+        self.login().await?;
+
+        if let Some(cid) = self.fetch_channel_by_name(team_id, name).await? {
+            tracing::info!("Resolved existing channel {} after re-login", name);
+            return Ok(cid);
+        }
+
+        Err(anyhow::anyhow!(
+            "Channel '{name}' exists but could not be resolved (race condition + bot may lack membership). \
+             Original create error: {status} {body}"
+        ))
     }
 
     /// Post a message to a channel. Returns the new post_id
@@ -280,7 +404,7 @@ impl MattermostClient {
         let resp = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", auth))
+            .header("Authorization", format!("Bearer {auth}"))
             .json(&payload)
             .send()
             .await
@@ -289,7 +413,7 @@ impl MattermostClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Mattermost post failed {}: {}", status, body));
+            return Err(anyhow::anyhow!("Mattermost post failed {status}: {body}"));
         }
 
         let post: PostResponse = resp.json().await.context("Failed to parse post response")?;
@@ -326,14 +450,14 @@ impl MattermostClient {
         let auth = self.get_auth_header().await?;
 
         let url = format!(
-            "{}/api/v4/channels/{}/posts?since={}&per_page=60",
-            self.base_url, channel_id, since
+            "{}/api/v4/channels/{channel_id}/posts?since={since}&per_page=60",
+            self.base_url
         );
 
         let resp = self
             .client
             .get(&url)
-            .header("Authorization", format!("Bearer {}", auth))
+            .header("Authorization", format!("Bearer {auth}"))
             .send()
             .await
             .context("Failed to fetch posts from Mattermost")?;
@@ -351,7 +475,8 @@ impl MattermostClient {
             .await
             .context("Failed to parse Mattermost posts response")?;
 
-        let mut posts: Vec<MattermostPost> = posts_response.order
+        let mut posts: Vec<MattermostPost> = posts_response
+            .order
             .iter()
             .filter_map(|id| posts_response.posts.get(id))
             .cloned()
@@ -371,14 +496,14 @@ impl MattermostClient {
         let auth = self.get_auth_header().await?;
 
         let url = format!(
-            "{}/api/v4/teams/{}/channels?per_page=200",
-            self.base_url, team_id
+            "{}/api/v4/teams/{team_id}/channels?per_page=200",
+            self.base_url
         );
 
         let resp = self
             .client
             .get(&url)
-            .header("Authorization", format!("Bearer {}", auth))
+            .header("Authorization", format!("Bearer {auth}"))
             .send()
             .await
             .context("Failed to list Mattermost channels")?;

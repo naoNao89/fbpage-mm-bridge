@@ -288,10 +288,11 @@ pub async fn lookup_customer_by_conversation(
     axum::extract::Path(conversation_id): axum::extract::Path<String>,
 ) -> impl IntoResponse {
     match db::get_customer_id_by_conversation(&state.pool, &conversation_id).await {
-        Ok(Some(customer_id)) => {
-            (StatusCode::OK, Json(serde_json::json!({ "customer_id": customer_id })))
-                .into_response()
-        }
+        Ok(Some(customer_id)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "customer_id": customer_id })),
+        )
+            .into_response(),
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
@@ -301,7 +302,11 @@ pub async fn lookup_customer_by_conversation(
         )
             .into_response(),
         Err(e) => {
-            tracing::error!("Failed to lookup customer for conv {}: {}", conversation_id, e);
+            tracing::error!(
+                "Failed to lookup customer for conv {}: {}",
+                conversation_id,
+                e
+            );
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
