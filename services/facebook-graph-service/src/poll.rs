@@ -152,25 +152,67 @@ async fn poll_conversation_new_messages(
             Ok(_) => {
                 let text = msg.message.as_deref().unwrap_or("");
                 let msg_root = root_id.as_deref();
-                match mm
-                    .post_message(
-                        &channel_id,
-                        text,
-                        msg_root,
-                        Some(msg.created_time.timestamp_millis()),
-                    )
-                    .await
-                {
-                    Ok(post_id) => {
-                        if root_id.is_none() {
-                            mm.set_root_id(conversation_id, &post_id);
+                let ts = Some(msg.created_time.timestamp_millis());
+                let customer_name_str = customer.name.as_deref().unwrap_or(conversation_id);
+
+                if direction == "incoming" {
+                    match mm.get_or_create_customer_bot(&cust_id, customer_name_str).await {
+                        Ok((_bot_uid, bot_token)) => {
+                            match mm
+                                .post_message_as_bot(&channel_id, text, msg_root, ts, &bot_token)
+                                .await
+                            {
+                                Ok(post_id) => {
+                                    if root_id.is_none() {
+                                        mm.set_root_id(conversation_id, &post_id);
+                                    }
+                                    posted += 1;
+                                }
+                                Err(e) if e.to_string().contains("Duplicate post skipped") => {}
+                                Err(e) if e.to_string().contains("Skipping empty message") => {}
+                                Err(e) => {
+                                    warn!("Bot post failed for {}, falling back: {e}", conversation_id);
+                                    if let Ok(post_id) = mm
+                                        .post_message(&channel_id, text, msg_root, ts)
+                                        .await
+                                    {
+                                        if root_id.is_none() {
+                                            mm.set_root_id(conversation_id, &post_id);
+                                        }
+                                        posted += 1;
+                                    }
+                                }
+                            }
                         }
-                        posted += 1;
+                        Err(e) => {
+                            warn!("Bot creation failed for {}, falling back: {e}", cust_id);
+                            if let Ok(post_id) = mm
+                                .post_message(&channel_id, text, msg_root, ts)
+                                .await
+                            {
+                                if root_id.is_none() {
+                                    mm.set_root_id(conversation_id, &post_id);
+                                }
+                                posted += 1;
+                            }
+                        }
                     }
-                    Err(e) if e.to_string().contains("Duplicate post skipped") => {}
-                    Err(e) if e.to_string().contains("Skipping empty message") => {}
-                    Err(e) => {
-                        warn!("Mattermost post failed for {}: {}", conversation_id, e);
+                } else {
+                    match mm
+                        .post_message(&channel_id, text, msg_root, ts)
+                        .await
+                    {
+                        Ok(post_id) => {
+                            if root_id.is_none() {
+                                mm.set_root_id(conversation_id, &post_id);
+                            }
+                            posted += 1;
+                        }
+                        Err(e) if e.to_string().contains("Duplicate post skipped") => {}
+                        Err(e) if e.to_string().contains("Skipping empty message") => {}
+                        Err(e) => {
+                            warn!("Mattermost post failed for {}: {}", conversation_id, e);
+                        }
                     }
                 }
             }
