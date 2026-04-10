@@ -80,11 +80,23 @@ async fn poll_conversation_new_messages(
         return Ok(0);
     }
 
+    let customer_name = messages.iter().find(|m| m.from.id != state.config.facebook_page_id)
+        .map(|m| m.from.name.clone())
+        .unwrap_or_else(|| conversation_id.to_string());
+
     let mm = &state.mattermost_client;
     let team_id = mm.get_team_id().await?;
     let channel_id = mm
-        .get_or_create_channel(&team_id, conversation_id, conversation_id)
+        .get_or_create_channel(&team_id, conversation_id, &customer_name)
         .await?;
+
+    if let Ok(channels) = mm.list_channels_by_prefix(&team_id, conversation_id).await {
+        if let Some(ch) = channels.first() {
+            if ch.display_name == conversation_id {
+                let _ = mm.patch_channel_display_name(&ch.id, &customer_name).await;
+            }
+        }
+    }
 
     let root_id = mm.get_root_id(conversation_id).await?;
 

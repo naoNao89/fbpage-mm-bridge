@@ -579,6 +579,40 @@ impl MattermostClient {
         Ok(posts)
     }
 
+    pub async fn patch_channel_display_name(
+        &self,
+        channel_id: &str,
+        display_name: &str,
+    ) -> Result<()> {
+        let auth = self.get_auth_header().await?;
+
+        let url = format!("{}/api/v4/channels/{}", self.base_url, channel_id);
+        let payload = serde_json::json!({
+            "display_name": display_name,
+        });
+
+        let resp = self
+            .client
+            .put(&url)
+            .header("Authorization", format!("Bearer {}", auth))
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to patch channel display name")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "Mattermost channel patch failed {}: {}",
+                status,
+                body
+            ));
+        }
+
+        Ok(())
+    }
+
     /// List all channels for a team, filtered by name prefix.
     /// Used by the bot to discover channels that correspond to FB conversations.
     pub async fn list_channels_by_prefix(

@@ -756,6 +756,56 @@ pub struct SendMessageResponse {
     pub message_id: String,
 }
 
+/// Resolve a Facebook user's real name from their Page-Scoped User ID.
+///
+/// Uses the Graph API `GET /{user-id}?fields=name` endpoint with the page
+/// access token. Falls back to the raw `user_id` on any error so callers
+/// always get a usable display string.
+pub async fn resolve_facebook_user_name(
+    access_token: &str,
+    user_id: &str,
+) -> Result<String> {
+    let client = Client::new();
+    let url = format!(
+        "{GRAPH_API_BASE}/{user_id}?fields=name&access_token={access_token}"
+    );
+
+    let response = client
+        .get(&url)
+        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .send()
+        .await
+        .context("Failed to fetch Facebook user profile")?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
+        warn!(
+            "Could not resolve Facebook user name for {} ({}): {}",
+            user_id, status, error_text
+        );
+        // Fallback: raw ID so the channel still gets created
+        return Ok(user_id.to_string());
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct UserProfile {
+        name: Option<String>,
+    }
+
+    let profile: UserProfile = response
+        .json()
+        .await
+        .context("Failed to parse Facebook user profile response")?;
+
+    let name = profile
+        .name
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| user_id.to_string());
+
+    Ok(name)
+}
+
 // Tests
 
 #[cfg(test)]
