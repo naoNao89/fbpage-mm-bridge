@@ -113,10 +113,21 @@ pub async fn webhook_handler(
                         external_id: msg.mid.clone(),
                         created_at: chrono::Utc::now(),
                     };
-                    let _ = state.message_client.store_message(payload).await;
-
-                    let _ = post_to_mattermost(&state, conversation_id, &text, msg.mid.as_deref())
-                        .await;
+                    match state.message_client.store_message(payload).await {
+                        Ok(_) => {
+                            let _ = post_to_mattermost(
+                                &state,
+                                conversation_id,
+                                &text,
+                                msg.mid.as_deref(),
+                            )
+                            .await;
+                        }
+                        Err(e) if e.to_string().contains("already exists") => {}
+                        Err(e) => {
+                            warn!("Failed to store webhook message: {}", e);
+                        }
+                    }
                 }
             }
         }
