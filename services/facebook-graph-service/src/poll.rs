@@ -143,10 +143,7 @@ async fn poll_conversation_new_messages(
         match state.message_client.store_message(message_payload).await {
             Ok(_) => {
                 let text = msg.message.as_deref().unwrap_or("");
-                let msg_root = match &root_id {
-                    Some(rid) => Some(rid.as_str()),
-                    None => None,
-                };
+                let msg_root = root_id.as_deref();
                 match mm
                     .post_message(
                         &channel_id,
