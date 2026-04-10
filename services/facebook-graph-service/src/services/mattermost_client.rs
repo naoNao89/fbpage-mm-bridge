@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::Deserialize;
+use sqlx::PgPool;
 
 /// Lightweight representations for API responses
 #[derive(Debug, Deserialize)]
@@ -31,8 +32,8 @@ pub struct MattermostClient {
     password: String,
     client: Client,
     token: Arc<Mutex<Option<String>>>,
+    pool: Option<Arc<PgPool>>,
 
-    // internal caches to avoid repeated lookups
     channel_cache: Arc<Mutex<HashMap<String, String>>>, // conversation_id -> channel_id
     root_cache: Arc<Mutex<HashMap<String, String>>>,    // conversation_id -> root_post_id
 }
@@ -46,9 +47,43 @@ impl MattermostClient {
             password: password.unwrap_or("").to_string(),
             client: Client::new(),
             token: Arc::new(Mutex::new(None)),
+            pool: None,
             channel_cache: Arc::new(Mutex::new(HashMap::new())),
             root_cache: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Attach a database pool for persistent cache storage and load existing entries.
+    pub async fn with_db_pool(mut self, pool: PgPool) -> Self {
+        let pool = Arc::new(pool);
+        match crate::db::load_mm_cache(&pool, "channel").await {
+            Ok(channels) => {
+                self.channel_cache
+                    .lock()
+                    .expect("channel_cache poisoned")
+                    .extend(channels);
+                tracing::info!(
+                    "Loaded {} channel cache entries from database",
+                    self.channel_cache.lock().unwrap().len()
+                );
+            }
+            Err(e) => tracing::warn!("Failed to load channel cache from database: {e}"),
+        }
+        match crate::db::load_mm_cache(&pool, "root").await {
+            Ok(roots) => {
+                self.root_cache
+                    .lock()
+                    .expect("root_cache poisoned")
+                    .extend(roots);
+                tracing::info!(
+                    "Loaded {} root cache entries from database",
+                    self.root_cache.lock().unwrap().len()
+                );
+            }
+            Err(e) => tracing::warn!("Failed to load root cache from database: {e}"),
+        }
+        self.pool = Some(pool);
+        self
     }
 
     /// Login to Mattermost and cache the token
@@ -175,20 +210,14 @@ impl MattermostClient {
         let name = conversation_id.to_lowercase();
 
         if let Some(cid) = self.fetch_channel_by_name(team_id, &name).await? {
-            self.channel_cache
-                .lock()
-                .unwrap()
-                .insert(conversation_id.to_string(), cid.clone());
+            self.set_channel_cache(conversation_id, &cid);
             return Ok(cid);
         }
 
         let cid = self
             .create_channel_with_retry(team_id, &name, display_name)
             .await?;
-        self.channel_cache
-            .lock()
-            .unwrap()
-            .insert(conversation_id.to_string(), cid.clone());
+        self.set_channel_cache(conversation_id, &cid);
         Ok(cid)
     }
 
@@ -417,12 +446,6 @@ impl MattermostClient {
         }
 
         let post: PostResponse = resp.json().await.context("Failed to parse post response")?;
-        // Cache the root_id if this is the first post (root)
-        if root_id.is_none() {
-            // Use conversation-channel key to store root post id. We don't have conversation_id here; rely on caller to set root via separate method if needed.
-            // For safety, store under a composite key built outside (caller passes conversation_id logic via separate setter).
-            // Here, we do not set a root_id automatically; caller will set via set_root_id if needed.
-        }
         Ok(post.id)
     }
 
@@ -432,6 +455,7 @@ impl MattermostClient {
             .lock()
             .expect("root_cache poisoned")
             .insert(conversation_id.to_string(), post_id.to_string());
+        self.persist_cache_entry("root", conversation_id, post_id);
     }
 
     /// Get the root post_id for a conversation if already posted as root
@@ -525,6 +549,33 @@ impl MattermostClient {
             .into_iter()
             .filter(|c| c.name.starts_with(prefix))
             .collect())
+    }
+
+    fn set_channel_cache(&self, conversation_id: &str, channel_id: &str) {
+        self.channel_cache
+            .lock()
+            .expect("channel_cache poisoned")
+            .insert(conversation_id.to_string(), channel_id.to_string());
+        self.persist_cache_entry("channel", conversation_id, channel_id);
+    }
+
+    fn persist_cache_entry(&self, key_type: &str, conversation_id: &str, value: &str) {
+        if let Some(pool) = &self.pool {
+            let pool = Arc::clone(pool);
+            let key_type = key_type.to_string();
+            let conversation_id = conversation_id.to_string();
+            let value = value.to_string();
+            tokio::spawn(async move {
+                if let Err(e) =
+                    crate::db::upsert_mm_cache(pool.as_ref(), &key_type, &conversation_id, &value)
+                        .await
+                {
+                    tracing::warn!(
+                        "Failed to persist {key_type} cache entry for {conversation_id}: {e}"
+                    );
+                }
+            });
+        }
     }
 }
 
