@@ -402,7 +402,11 @@ impl MattermostClient {
         ))
     }
 
-    /// Post a message to a channel. Returns the new post_id
+    /// Post a message to a channel. Returns the new post_id.
+    ///
+    /// Skips posting if the channel already has a recent post with the same
+    /// message text (handles webhook+poller race conditions where both
+    /// paths process the same Facebook message).
     pub async fn post_message(
         &self,
         channel_id: &str,
@@ -410,6 +414,20 @@ impl MattermostClient {
         root_id: Option<&str>,
         create_at: Option<i64>,
     ) -> Result<String> {
+        if message.trim().is_empty() {
+            return Err(anyhow::anyhow!("Skipping empty message post"));
+        }
+
+        if let Some(existing_id) = self
+            .find_duplicate_post(channel_id, message, create_at)
+            .await?
+        {
+            tracing::info!(
+                "Skipping duplicate post in channel {channel_id}: message already exists as {existing_id}"
+            );
+            return Err(anyhow::anyhow!("Duplicate post skipped: {existing_id}"));
+        }
+
         let auth = self.get_auth_header().await?;
 
         let url = format!("{}/api/v4/posts", self.base_url);
@@ -447,6 +465,57 @@ impl MattermostClient {
 
         let post: PostResponse = resp.json().await.context("Failed to parse post response")?;
         Ok(post.id)
+    }
+
+    async fn find_duplicate_post(
+        &self,
+        channel_id: &str,
+        message: &str,
+        create_at: Option<i64>,
+    ) -> Result<Option<String>> {
+        let auth = self.get_auth_header().await?;
+        let url = format!(
+            "{}/api/v4/channels/{channel_id}/posts?per_page=10",
+            self.base_url
+        );
+
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await
+            .context("Failed to check for duplicate posts")?;
+
+        if !resp.status().is_success() {
+            return Ok(None);
+        }
+
+        let posts_data: serde_json::Value = resp
+            .json()
+            .await
+            .context("Failed to parse posts response")?;
+
+        let posts = match posts_data.get("posts").and_then(|p| p.as_object()) {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+
+        for (_id, post) in posts {
+            if post.get("message").and_then(|m| m.as_str()) == Some(message) {
+                if let Some(ts) = create_at {
+                    if post.get("create_at").and_then(|t| t.as_i64()) == Some(ts) {
+                        let existing_id = post.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                        return Ok(Some(existing_id.to_string()));
+                    }
+                } else {
+                    let existing_id = post.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                    return Ok(Some(existing_id.to_string()));
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     /// Manually set root post id for a conversation

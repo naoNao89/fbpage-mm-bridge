@@ -152,6 +152,8 @@ async fn poll_conversation_new_messages(
                         }
                         posted += 1;
                     }
+                    Err(e) if e.to_string().contains("Duplicate post skipped") => {}
+                    Err(e) if e.to_string().contains("Skipping empty message") => {}
                     Err(e) => {
                         warn!("Mattermost post failed for {}: {}", conversation_id, e);
                     }
