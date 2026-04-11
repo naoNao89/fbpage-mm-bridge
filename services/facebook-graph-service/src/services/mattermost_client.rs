@@ -358,7 +358,6 @@ impl MattermostClient {
                 .json()
                 .await
                 .context("Failed to parse channel create response")?;
-            let _ = self.ensure_bot_membership(&ch.id).await;
             return Ok(ch.id);
         }
 
@@ -378,7 +377,6 @@ impl MattermostClient {
 
         if let Some(cid) = self.fetch_channel_by_name(team_id, name).await? {
             tracing::info!("Resolved existing channel {} via name lookup", name);
-            let _ = self.ensure_bot_membership(&cid).await;
             return Ok(cid);
         }
 
@@ -394,13 +392,11 @@ impl MattermostClient {
                 "Resolved existing channel {} via team channel listing",
                 name
             );
-            let _ = self.ensure_bot_membership(&ch.id).await;
             return Ok(ch.id);
         }
 
         if let Some(cid) = self.restore_deleted_channel(team_id, name).await? {
             tracing::info!("Restored deleted channel {} and got ID {}", name, cid);
-            let _ = self.ensure_bot_membership(&cid).await;
             return Ok(cid);
         }
 
@@ -1107,6 +1103,7 @@ impl MattermostClient {
 
         if resp.status().is_success() {
             tracing::info!("Added user {user_id} to channel {channel_id}");
+            self.cleanup_system_message(channel_id, auth).await;
         } else if resp.status().as_u16() == 400 {
             tracing::debug!("User {user_id} already a member of channel {channel_id}");
         } else {
@@ -1116,6 +1113,58 @@ impl MattermostClient {
         }
 
         Ok(())
+    }
+
+    async fn cleanup_system_message(&self, channel_id: &str, auth: &str) {
+        let url = format!(
+            "{}/api/v4/channels/{channel_id}/posts?per_page=3",
+            self.base_url
+        );
+        let resp = match self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+
+        let data: serde_json::Value = match resp.json().await {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+
+        let posts = match data.get("posts").and_then(|p| p.as_object()) {
+            Some(p) => p,
+            None => return,
+        };
+
+        let admin_id = match self.resolve_bot_user_id().await.ok() {
+            Some(id) => id,
+            None => return,
+        };
+
+        for (_, post) in posts {
+            let ptype = post.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            let uid = post.get("user_id").and_then(|u| u.as_str()).unwrap_or("");
+            let pid = post.get("id").and_then(|i| i.as_str()).unwrap_or("");
+            if (ptype.starts_with("system_") || ptype == "system_join_channel")
+                && uid == admin_id
+                && !pid.is_empty()
+            {
+                let del_url = format!("{}/api/v4/posts/{pid}", self.base_url);
+                let _ = self
+                    .client
+                    .delete(&del_url)
+                    .header("Authorization", format!("Bearer {auth}"))
+                    .send()
+                    .await;
+                tracing::debug!("Cleaned up system message {pid} in channel {channel_id}");
+                break;
+            }
+        }
     }
 
     async fn resolve_bot_user_id(&self) -> Result<String> {
