@@ -694,32 +694,8 @@ impl MattermostClient {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             if body.contains("already exists") || body.contains("must be unique") {
-                let mut resolved: Option<String> = None;
-                for suffix in 2..=9u32 {
-                    let alt_slug = format!("{}-{}", &slug, suffix);
-                    let alt_payload = serde_json::json!({
-                        "username": alt_slug,
-                        "display_name": display_name,
-                        "description": "FB Page customer"
-                    });
-                    let alt_resp = self
-                        .client
-                        .post(&create_url)
-                        .header("Authorization", format!("Bearer {auth}"))
-                        .json(&alt_payload)
-                        .send()
-                        .await
-                        .context("Failed to create customer bot (retry)")?;
-                    if alt_resp.status().is_success() {
-                        let bot: BotResponse = alt_resp.json().await.context("Failed to parse bot response")?;
-                        resolved = Some(bot.user_id);
-                        break;
-                    }
-                }
-                match resolved {
-                    Some(id) => id,
-                    None => self.resolve_bot_user_by_username(&slug).await?,
-                }
+                tracing::info!("Bot username {slug} already exists, resolving existing bot");
+                self.resolve_bot_user_by_username(&slug).await?
             } else {
                 return Err(anyhow::anyhow!("Bot creation failed {status}: {body}"));
             }
