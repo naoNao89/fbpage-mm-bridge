@@ -885,9 +885,6 @@ pub async fn reimport_conversation(
 
     let mut posted = 0u32;
     let mut root_id: Option<String> = None;
-    if let Ok(existing) = mm.get_root_id(&conversation_id).await {
-        root_id = existing;
-    }
 
     for msg in ordered {
         let is_from_page = msg.from.id == state.config.facebook_page_id;
