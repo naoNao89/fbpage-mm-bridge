@@ -673,11 +673,7 @@ impl MattermostClient {
         let auth = self.get_auth_header().await?;
         let team_id = self.get_team_id().await?;
 
-        let username = format!("fb-{}", &platform_user_id[..16.min(platform_user_id.len())]);
-        let slug: String = username
-            .chars()
-            .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-' || *c == '_')
-            .collect();
+        let slug = self.generate_bot_username(display_name);
 
         let create_url = format!("{}/api/v4/bots", self.base_url);
         let payload = serde_json::json!({
@@ -702,7 +698,32 @@ impl MattermostClient {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             if body.contains("already exists") || body.contains("must be unique") {
-                self.resolve_bot_user_by_username(&slug).await?
+                let mut resolved: Option<String> = None;
+                for suffix in 2..=9u32 {
+                    let alt_slug = format!("{}-{}", &slug, suffix);
+                    let alt_payload = serde_json::json!({
+                        "username": alt_slug,
+                        "display_name": display_name,
+                        "description": "FB Page customer"
+                    });
+                    let alt_resp = self
+                        .client
+                        .post(&create_url)
+                        .header("Authorization", format!("Bearer {auth}"))
+                        .json(&alt_payload)
+                        .send()
+                        .await
+                        .context("Failed to create customer bot (retry)")?;
+                    if alt_resp.status().is_success() {
+                        let bot: BotResponse = alt_resp.json().await.context("Failed to parse bot response")?;
+                        resolved = Some(bot.user_id);
+                        break;
+                    }
+                }
+                match resolved {
+                    Some(id) => id,
+                    None => self.resolve_bot_user_by_username(&slug).await?,
+                }
             } else {
                 return Err(anyhow::anyhow!("Bot creation failed {status}: {body}"));
             }
@@ -755,6 +776,47 @@ impl MattermostClient {
         let _ = self.add_user_to_channel(channel_id, &bot_user_id, &auth).await;
 
         Ok((bot_user_id, bot_token))
+    }
+
+    fn generate_bot_username(&self, display_name: &str) -> String {
+        let ascii: String = display_name
+            .to_lowercase()
+            .chars()
+            .map(|c| {
+                match c {
+                    'á' | 'à' | 'ả' | 'ã' | 'ạ' | 'ă' | 'ắ' | 'ằ' | 'ẳ' | 'ẵ' | 'ặ' | 'â' | 'ấ' | 'ầ' | 'ẩ' | 'ẫ' | 'ậ' => 'a',
+                    'đ' => 'd',
+                    'é' | 'è' | 'ẻ' | 'ẽ' | 'ẹ' | 'ê' | 'ế' | 'ề' | 'ể' | 'ễ' | 'ệ' => 'e',
+                    'í' | 'ì' | 'ỉ' | 'ĩ' | 'ị' => 'i',
+                    'ó' | 'ò' | 'ỏ' | 'õ' | 'ọ' | 'ô' | 'ố' | 'ồ' | 'ổ' | 'ỗ' | 'ộ' | 'ơ' | 'ớ' | 'ờ' | 'ở' | 'ỡ' | 'ợ' => 'o',
+                    'ú' | 'ù' | 'ủ' | 'ũ' | 'ụ' | 'ư' | 'ứ' | 'ừ' | 'ử' | 'ữ' | 'ự' => 'u',
+                    'ý' | 'ỳ' | 'ỷ' | 'ỹ' | 'ỵ' => 'y',
+                    _ => c,
+                }
+            })
+            .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == ' ' || *c == '-')
+            .collect::<String>();
+
+        let slug: String = ascii
+            .split(|c: char| c == ' ')
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("-");
+
+        let slug: String = slug
+            .chars()
+            .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-')
+            .collect();
+
+        let min_len = 3;
+        let max_len = 22;
+        if slug.len() < min_len {
+            return format!("cust-{}", slug);
+        }
+        if slug.len() > max_len {
+            return slug[..max_len].to_string();
+        }
+        slug
     }
 
     async fn resolve_bot_user_by_username(&self, username: &str) -> Result<String> {
