@@ -490,7 +490,7 @@ impl MattermostClient {
     ) -> Result<Option<String>> {
         let auth = self.get_auth_header().await?;
         let url = format!(
-            "{}/api/v4/channels/{channel_id}/posts?per_page=10",
+            "{}/api/v4/channels/{channel_id}/posts?per_page=50",
             self.base_url
         );
 
