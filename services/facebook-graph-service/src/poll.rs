@@ -105,7 +105,21 @@ async fn poll_conversation_new_messages(
 
     let mut posted = 0;
 
+    let mut incoming_msgs: Vec<&crate::models::GraphMessage> = Vec::new();
+    let mut outgoing_msgs: Vec<&crate::models::GraphMessage> = Vec::new();
+
     for msg in &messages {
+        let is_from_page = msg.from.id == state.config.facebook_page_id;
+        if is_from_page {
+            outgoing_msgs.push(msg);
+        } else {
+            incoming_msgs.push(msg);
+        }
+    }
+
+    let ordered_msgs: Vec<&crate::models::GraphMessage> = incoming_msgs.into_iter().chain(outgoing_msgs.into_iter()).collect();
+
+    for msg in ordered_msgs {
         let is_from_page = msg.from.id == state.config.facebook_page_id;
         let direction = if is_from_page { "outgoing" } else { "incoming" };
 
