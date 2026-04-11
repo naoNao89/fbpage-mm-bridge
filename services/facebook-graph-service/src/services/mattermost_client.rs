@@ -863,6 +863,16 @@ impl MattermostClient {
             return Err(anyhow::anyhow!("Skipping empty message post"));
         }
 
+        if let Some(existing_id) = self
+            .find_duplicate_post(channel_id, message, create_at)
+            .await?
+        {
+            tracing::info!(
+                "Skipping duplicate bot post in channel {channel_id}: message already exists as {existing_id}"
+            );
+            return Err(anyhow::anyhow!("Duplicate post skipped: {existing_id}"));
+        }
+
         let url = format!("{}/api/v4/posts", self.base_url);
         let mut payload = serde_json::json!({
             "channel_id": channel_id,
