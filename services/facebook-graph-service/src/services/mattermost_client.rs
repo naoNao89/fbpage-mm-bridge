@@ -169,7 +169,7 @@ impl MattermostClient {
     }
 
     /// Get authorization header value, logging in if needed
-    async fn get_auth_header(&self) -> Result<String> {
+    pub async fn get_auth_header(&self) -> Result<String> {
         let needs_login = self.token.lock().expect("token lock poisoned").is_none();
         if needs_login {
             self.login().await?;

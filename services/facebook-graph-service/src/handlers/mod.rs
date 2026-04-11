@@ -1,7 +1,7 @@
 //! HTTP handlers for the Facebook Graph Service
 
 use anyhow::Context;
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{extract::{Path, State}, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
@@ -774,4 +774,188 @@ pub async fn process_conversation(
         messages_skipped,
         error: None,
     })
+}
+
+/// Re-import a single conversation: delete all existing posts, then re-post
+/// with direction-aware bot names (incoming → customer bot, outgoing → admin).
+pub async fn reimport_conversation(
+    State(state): State<AppState>,
+    Path(conversation_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let mm = &state.mattermost_client;
+    let team_id = mm.get_team_id().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Get or create channel
+    let channel_id = mm
+        .get_or_create_channel(&team_id, &conversation_id, &conversation_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Delete all existing posts in the channel
+    let auth = mm.get_auth_header().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let client = reqwest::Client::new();
+    let mut deleted = 0u32;
+    let mut page = 0u32;
+    loop {
+        let url = format!(
+            "{}/api/v4/channels/{}/posts?per_page=200&page={}",
+            state.config.mattermost_url.trim_end_matches('/'),
+            channel_id,
+            page
+        );
+        let resp = client
+            .get(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        if !resp.status().is_success() {
+            break;
+        }
+
+        let data: serde_json::Value = resp.json().await.unwrap_or_default();
+        let posts = match data.get("posts").and_then(|p| p.as_object()) {
+            Some(p) => p,
+            None => break,
+        };
+
+        if posts.is_empty() {
+            break;
+        }
+
+        for (_, post) in posts {
+            if let Some(pid) = post.get("id").and_then(|i| i.as_str()) {
+                let del_url = format!(
+                    "{}/api/v4/posts/{}",
+                    state.config.mattermost_url.trim_end_matches('/'),
+                    pid
+                );
+                let _ = client.delete(&del_url)
+                    .header("Authorization", format!("Bearer {auth}"))
+                    .send()
+                    .await;
+                deleted += 1;
+            }
+        }
+
+        page += 1;
+    }
+
+    tracing::info!("Reimport: deleted {} posts from channel {}", deleted, conversation_id);
+
+    // Fetch messages from Facebook Graph API
+    let messages = crate::graph_api::get_conversation_messages(
+        &state.pool,
+        &conversation_id,
+        &state.config.facebook_page_access_token,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let total = messages.len();
+    tracing::info!("Reimport: fetched {} messages for conversation {}", total, conversation_id);
+
+    // Sort: incoming first, then outgoing
+    let mut incoming: Vec<&crate::models::GraphMessage> = Vec::new();
+    let mut outgoing: Vec<&crate::models::GraphMessage> = Vec::new();
+    for msg in &messages {
+        if msg.from.id == state.config.facebook_page_id {
+            outgoing.push(msg);
+        } else {
+            incoming.push(msg);
+        }
+    }
+    let ordered: Vec<&crate::models::GraphMessage> = incoming.into_iter().chain(outgoing.into_iter()).collect();
+
+    // Get display name from first incoming message, or first message
+    let display_name = ordered
+        .iter()
+        .find_map(|msg| {
+            if msg.from.id != state.config.facebook_page_id {
+                Some(msg.from.name.clone())
+            } else {
+                msg.to.data.first().map(|u| u.name.clone())
+            }
+        })
+        .unwrap_or_else(|| conversation_id.to_string());
+
+    // Update channel display name
+    let _ = mm.maybe_update_display_name(&channel_id, &conversation_id, &display_name).await;
+
+    let mut posted = 0u32;
+    let mut root_id: Option<String> = None;
+    if let Ok(existing) = mm.get_root_id(&conversation_id).await {
+        root_id = existing;
+    }
+
+    for msg in ordered {
+        let is_from_page = msg.from.id == state.config.facebook_page_id;
+        let direction = if is_from_page { "outgoing" } else { "incoming" };
+        let text = match &msg.message {
+            Some(t) if !t.trim().is_empty() => t.as_str(),
+            _ => continue,
+        };
+
+        let ts = Some(msg.created_time.timestamp_millis());
+
+        if direction == "incoming" {
+            let cust_id = &msg.from.id;
+            let customer_name = &msg.from.name;
+
+            match mm.get_or_create_customer_bot(cust_id, customer_name, &channel_id).await {
+                Ok((bot_uid, bot_token)) => {
+                    let root = root_id.as_deref();
+                    match mm.post_message_as_bot(&channel_id, text, root, ts, &bot_uid, &bot_token).await {
+                        Ok(post_id) => {
+                            if root_id.is_none() {
+                                mm.set_root_id(&conversation_id, &post_id);
+                                root_id = Some(post_id);
+                            }
+                            posted += 1;
+                        }
+                        Err(e) => {
+                            tracing::warn!("Reimport: bot post failed for {}: {}", conversation_id, e);
+                            let root = root_id.as_deref();
+                            if let Ok(post_id) = mm.post_message(&channel_id, text, root, ts).await {
+                                if root_id.is_none() {
+                                    mm.set_root_id(&conversation_id, &post_id);
+                                    root_id = Some(post_id);
+                                }
+                                posted += 1;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Reimport: bot creation failed for {}: {}", cust_id, e);
+                    let root = root_id.as_deref();
+                    if let Ok(post_id) = mm.post_message(&channel_id, text, root, ts).await {
+                        if root_id.is_none() {
+                            mm.set_root_id(&conversation_id, &post_id);
+                            root_id = Some(post_id);
+                        }
+                        posted += 1;
+                    }
+                }
+            }
+        } else {
+            let root = root_id.as_deref();
+            if let Ok(post_id) = mm.post_message(&channel_id, text, root, ts).await {
+                if root_id.is_none() {
+                    mm.set_root_id(&conversation_id, &post_id);
+                    root_id = Some(post_id);
+                }
+                posted += 1;
+            }
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "conversation_id": conversation_id,
+        "deleted_posts": deleted,
+        "messages_fetched": total,
+        "messages_posted": posted,
+        "status": "completed"
+    })))
 }
