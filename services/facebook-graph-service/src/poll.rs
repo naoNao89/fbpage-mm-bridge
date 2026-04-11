@@ -108,7 +108,6 @@ async fn poll_conversation_new_messages(
     for msg in &messages {
         let is_from_page = msg.from.id == state.config.facebook_page_id;
         let direction = if is_from_page { "outgoing" } else { "incoming" };
-        tracing::info!("Message {} direction={direction} from={} page_id={}", msg.id, msg.from.id, state.config.facebook_page_id);
 
         let (customer_platform_id, customer_name) = if is_from_page {
             (
