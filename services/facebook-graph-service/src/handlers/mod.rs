@@ -960,54 +960,44 @@ pub async fn reimport_conversation(
 pub async fn reimport_all_conversations(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let mm = &state.mattermost_client;
+    let channels = state.mattermost_client.get_all_t_channels().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let total = channels.len();
+    info!("Reimport-all: starting background reimport of {} channels", total);
 
-    let channels = mm.get_all_t_channels().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let total_channels = channels.len();
-    info!("Reimport-all: found {} t_ channels", total_channels);
+    tokio::spawn(async move {
+        let mut total_deleted = 0u32;
+        let mut total_fetched = 0usize;
+        let mut total_posted = 0u32;
+        let mut errors = 0u32;
 
-    let mut results = Vec::new();
-    let mut total_deleted = 0u32;
-    let mut total_fetched = 0usize;
-    let mut total_posted = 0u32;
-    let mut errors = 0u32;
+        for (idx, channel) in channels.iter().enumerate() {
+            let conv_id = &channel.name;
+            info!("Reimport-all [{}/{}]: processing {}", idx + 1, total, conv_id);
 
-    for (idx, channel) in channels.iter().enumerate() {
-        let conv_id = &channel.name;
-        info!("Reimport-all [{}/{}]: processing {}", idx + 1, total_channels, conv_id);
-
-        match reimport_single_conversation(&state, conv_id, &channel.id).await {
-            Ok(result) => {
-                total_deleted += result.deleted_posts;
-                total_fetched += result.messages_fetched;
-                total_posted += result.messages_posted;
-                results.push(serde_json::json!({
-                    "conversation_id": conv_id,
-                    "status": "ok",
-                    "deleted_posts": result.deleted_posts,
-                    "messages_fetched": result.messages_fetched,
-                    "messages_posted": result.messages_posted,
-                }));
-            }
-            Err(e) => {
-                tracing::error!("Reimport-all: failed for {}: {}", conv_id, e);
-                errors += 1;
-                results.push(serde_json::json!({
-                    "conversation_id": conv_id,
-                    "status": "error",
-                    "error": e.to_string(),
-                }));
+            match reimport_single_conversation(&state, conv_id, &channel.id).await {
+                Ok(result) => {
+                    total_deleted += result.deleted_posts;
+                    total_fetched += result.messages_fetched;
+                    total_posted += result.messages_posted;
+                }
+                Err(e) => {
+                    tracing::error!("Reimport-all: failed for {}: {}", conv_id, e);
+                    errors += 1;
+                }
             }
         }
-    }
+
+        info!(
+            "Reimport-all complete: {} channels, {} deleted, {} fetched, {} posted, {} errors",
+            total, total_deleted, total_fetched, total_posted, errors
+        );
+    });
 
     Ok(Json(serde_json::json!({
-        "total_channels": total_channels,
-        "total_deleted": total_deleted,
-        "total_fetched": total_fetched,
-        "total_posted": total_posted,
-        "errors": errors,
-        "results": results,
+        "status": "started",
+        "total_channels": total,
+        "message": "Reimport running in background. Check logs for progress."
     })))
 }
 
