@@ -115,6 +115,12 @@ pub async fn webhook_handler(
                     };
                     let _ = state.message_client.store_message(payload).await;
 
+                    if let Some(ref mid) = msg.mid {
+                        if !state.mattermost_client.mark_posted(mid) {
+                            continue;
+                        }
+                    }
+
                     let display_name = customer.name.as_deref().unwrap_or(conversation_id);
                     let _ = post_to_mattermost(
                         &state,
@@ -655,6 +661,9 @@ pub async fn process_conversation(
 
         match state.message_client.store_message(message_payload).await {
             Ok(_) => {
+                if !state.mattermost_client.mark_posted(&msg.id) {
+                    continue;
+                }
                 messages_stored += 1;
                 // Attempt to post to Mattermost as a normal conversation (threaded)
                 // Best-effort: log and continue on failure

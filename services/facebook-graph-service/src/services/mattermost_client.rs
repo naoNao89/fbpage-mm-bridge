@@ -49,6 +49,7 @@ pub struct MattermostClient {
     display_name_cache: Arc<Mutex<HashMap<String, String>>>,
     bot_user_cache: Arc<Mutex<HashMap<String, String>>>,   // platform_user_id -> bot_user_id
     bot_token_cache: Arc<Mutex<HashMap<String, String>>>,  // bot_user_id -> bot_token
+    posted_ids: Arc<Mutex<std::collections::HashSet<String>>>, // external_id already posted to MM
 }
 
 impl MattermostClient {
@@ -66,6 +67,7 @@ impl MattermostClient {
             display_name_cache: Arc::new(Mutex::new(HashMap::new())),
             bot_user_cache: Arc::new(Mutex::new(HashMap::new())),
             bot_token_cache: Arc::new(Mutex::new(HashMap::new())),
+            posted_ids: Arc::new(Mutex::new(std::collections::HashSet::new())),
         }
     }
 
@@ -148,6 +150,13 @@ impl MattermostClient {
         *tok = Some(token);
 
         Ok(())
+    }
+
+    pub fn mark_posted(&self, external_id: &str) -> bool {
+        self.posted_ids
+            .lock()
+            .expect("posted_ids poisoned")
+            .insert(external_id.to_string())
     }
 
     /// Ensure a valid token is available

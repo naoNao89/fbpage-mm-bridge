@@ -164,6 +164,9 @@ async fn poll_conversation_new_messages(
 
         match state.message_client.store_message(message_payload).await {
             Ok(_) => {
+                if !mm.mark_posted(&msg.id) {
+                    continue;
+                }
                 let text = msg.message.as_deref().unwrap_or("");
                 let msg_root = root_id.as_deref();
                 let ts = Some(msg.created_time.timestamp_millis());
