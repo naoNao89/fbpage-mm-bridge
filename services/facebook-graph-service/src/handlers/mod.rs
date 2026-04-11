@@ -956,3 +956,229 @@ pub async fn reimport_conversation(
         "status": "completed"
     })))
 }
+
+pub async fn reimport_all_conversations(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let mm = &state.mattermost_client;
+
+    let channels = mm.get_all_t_channels().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let total_channels = channels.len();
+    info!("Reimport-all: found {} t_ channels", total_channels);
+
+    let mut results = Vec::new();
+    let mut total_deleted = 0u32;
+    let mut total_fetched = 0usize;
+    let mut total_posted = 0u32;
+    let mut errors = 0u32;
+
+    for (idx, channel) in channels.iter().enumerate() {
+        let conv_id = &channel.name;
+        info!("Reimport-all [{}/{}]: processing {}", idx + 1, total_channels, conv_id);
+
+        match reimport_single_conversation(&state, conv_id, &channel.id).await {
+            Ok(result) => {
+                total_deleted += result.deleted_posts;
+                total_fetched += result.messages_fetched;
+                total_posted += result.messages_posted;
+                results.push(serde_json::json!({
+                    "conversation_id": conv_id,
+                    "status": "ok",
+                    "deleted_posts": result.deleted_posts,
+                    "messages_fetched": result.messages_fetched,
+                    "messages_posted": result.messages_posted,
+                }));
+            }
+            Err(e) => {
+                tracing::error!("Reimport-all: failed for {}: {}", conv_id, e);
+                errors += 1;
+                results.push(serde_json::json!({
+                    "conversation_id": conv_id,
+                    "status": "error",
+                    "error": e.to_string(),
+                }));
+            }
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "total_channels": total_channels,
+        "total_deleted": total_deleted,
+        "total_fetched": total_fetched,
+        "total_posted": total_posted,
+        "errors": errors,
+        "results": results,
+    })))
+}
+
+struct ReimportResult {
+    deleted_posts: u32,
+    messages_fetched: usize,
+    messages_posted: u32,
+}
+
+async fn reimport_single_conversation(
+    state: &AppState,
+    conversation_id: &str,
+    channel_id: &str,
+) -> Result<ReimportResult, anyhow::Error> {
+    let mm = &state.mattermost_client;
+
+    let auth = mm.get_auth_header().await?;
+    let client = reqwest::Client::new();
+    let mut deleted = 0u32;
+    let mut page = 0u32;
+    loop {
+        let url = format!(
+            "{}/api/v4/channels/{}/posts?per_page=200&page={}",
+            state.config.mattermost_url.trim_end_matches('/'),
+            channel_id,
+            page
+        );
+        let resp = client
+            .get(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to fetch posts: {e}"))?;
+
+        if !resp.status().is_success() {
+            break;
+        }
+
+        let data: serde_json::Value = resp.json().await.unwrap_or_default();
+        let posts = match data.get("posts").and_then(|p| p.as_object()) {
+            Some(p) => p,
+            None => break,
+        };
+
+        if posts.is_empty() {
+            break;
+        }
+
+        for (_, post) in posts {
+            if let Some(pid) = post.get("id").and_then(|i| i.as_str()) {
+                let del_url = format!(
+                    "{}/api/v4/posts/{}",
+                    state.config.mattermost_url.trim_end_matches('/'),
+                    pid
+                );
+                let _ = client.delete(&del_url)
+                    .header("Authorization", format!("Bearer {auth}"))
+                    .send()
+                    .await;
+                deleted += 1;
+            }
+        }
+
+        page += 1;
+    }
+
+    tracing::info!("Reimport: deleted {} posts from channel {}", deleted, conversation_id);
+
+    let messages = crate::graph_api::get_conversation_messages(
+        &state.pool,
+        conversation_id,
+        &state.config.facebook_page_access_token,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Failed to fetch messages: {e}"))?;
+
+    let total = messages.len();
+    tracing::info!("Reimport: fetched {} messages for conversation {}", total, conversation_id);
+
+    let mut incoming: Vec<&crate::models::GraphMessage> = Vec::new();
+    let mut outgoing: Vec<&crate::models::GraphMessage> = Vec::new();
+    for msg in &messages {
+        if msg.from.id == state.config.facebook_page_id {
+            outgoing.push(msg);
+        } else {
+            incoming.push(msg);
+        }
+    }
+    let ordered: Vec<&crate::models::GraphMessage> = incoming.into_iter().chain(outgoing.into_iter()).collect();
+
+    let display_name = ordered
+        .iter()
+        .find_map(|msg| {
+            if msg.from.id != state.config.facebook_page_id {
+                Some(msg.from.name.clone())
+            } else {
+                msg.to.data.first().map(|u| u.name.clone())
+            }
+        })
+        .unwrap_or_else(|| conversation_id.to_string());
+
+    let _ = mm.maybe_update_display_name(channel_id, conversation_id, &display_name).await;
+
+    let mut posted = 0u32;
+    let mut root_id: Option<String> = None;
+
+    for msg in ordered {
+        let is_from_page = msg.from.id == state.config.facebook_page_id;
+        let direction = if is_from_page { "outgoing" } else { "incoming" };
+        let text = match &msg.message {
+            Some(t) if !t.trim().is_empty() => t.as_str(),
+            _ => continue,
+        };
+
+        let ts = Some(msg.created_time.timestamp_millis());
+
+        if direction == "incoming" {
+            let cust_id = &msg.from.id;
+            let customer_name = &msg.from.name;
+
+            match mm.get_or_create_customer_bot(cust_id, customer_name, channel_id).await {
+                Ok((bot_uid, bot_token)) => {
+                    let root = root_id.as_deref();
+                    match mm.post_message_as_bot(channel_id, text, root, ts, &bot_uid, &bot_token).await {
+                        Ok(post_id) => {
+                            if root_id.is_none() {
+                                mm.set_root_id(conversation_id, &post_id);
+                                root_id = Some(post_id);
+                            }
+                            posted += 1;
+                        }
+                        Err(e) => {
+                            tracing::warn!("Reimport: bot post failed for {}: {}", conversation_id, e);
+                            let root = root_id.as_deref();
+                            if let Ok(post_id) = mm.post_message(channel_id, text, root, ts).await {
+                                if root_id.is_none() {
+                                    mm.set_root_id(conversation_id, &post_id);
+                                    root_id = Some(post_id);
+                                }
+                                posted += 1;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Reimport: bot creation failed for {}: {}", cust_id, e);
+                    let root = root_id.as_deref();
+                    if let Ok(post_id) = mm.post_message(channel_id, text, root, ts).await {
+                        if root_id.is_none() {
+                            mm.set_root_id(conversation_id, &post_id);
+                            root_id = Some(post_id);
+                        }
+                        posted += 1;
+                    }
+                }
+            }
+        } else {
+            let root = root_id.as_deref();
+            if let Ok(post_id) = mm.post_message(channel_id, text, root, ts).await {
+                if root_id.is_none() {
+                    mm.set_root_id(conversation_id, &post_id);
+                    root_id = Some(post_id);
+                }
+                posted += 1;
+            }
+        }
+    }
+
+    Ok(ReimportResult {
+        deleted_posts: deleted,
+        messages_fetched: total,
+        messages_posted: posted,
+    })
+}

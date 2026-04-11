@@ -605,6 +605,11 @@ impl MattermostClient {
 
     /// List all channels for a team, filtered by name prefix.
     /// Used by the bot to discover channels that correspond to FB conversations.
+    pub async fn get_all_t_channels(&self) -> Result<Vec<ChannelInfo>> {
+        let team_id = self.get_team_id().await?;
+        self.list_channels_by_prefix(&team_id, "t_").await
+    }
+
     pub async fn list_channels_by_prefix(
         &self,
         team_id: &str,
