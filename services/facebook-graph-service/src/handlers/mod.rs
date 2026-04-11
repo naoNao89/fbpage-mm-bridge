@@ -857,19 +857,10 @@ pub async fn reimport_conversation(
     tracing::info!("Reimport: fetched {} messages for conversation {}", total, conversation_id);
 
     // Sort: incoming first, then outgoing
-    let mut incoming: Vec<&crate::models::GraphMessage> = Vec::new();
-    let mut outgoing: Vec<&crate::models::GraphMessage> = Vec::new();
-    for msg in &messages {
-        if msg.from.id == state.config.facebook_page_id {
-            outgoing.push(msg);
-        } else {
-            incoming.push(msg);
-        }
-    }
-    let ordered: Vec<&crate::models::GraphMessage> = incoming.into_iter().chain(outgoing.into_iter()).collect();
+    let mut messages = messages;
+    messages.sort_by_key(|m| m.created_time);
 
-    // Get display name from first incoming message, or first message
-    let display_name = ordered
+    let display_name = messages
         .iter()
         .find_map(|msg| {
             if msg.from.id != state.config.facebook_page_id {
@@ -880,15 +871,13 @@ pub async fn reimport_conversation(
         })
         .unwrap_or_else(|| conversation_id.to_string());
 
-    // Update channel display name
     let _ = mm.maybe_update_display_name(&channel_id, &conversation_id, &display_name).await;
 
     let mut posted = 0u32;
     let mut root_id: Option<String> = None;
 
-    for msg in ordered {
+    for msg in &messages {
         let is_from_page = msg.from.id == state.config.facebook_page_id;
-        let direction = if is_from_page { "outgoing" } else { "incoming" };
         let text = match &msg.message {
             Some(t) if !t.trim().is_empty() => t.as_str(),
             _ => continue,
@@ -896,36 +885,26 @@ pub async fn reimport_conversation(
 
         let ts = Some(msg.created_time.timestamp_millis());
 
-        if direction == "incoming" {
-            let cust_id = &msg.from.id;
+        if !is_from_page {
             let customer_name = &msg.from.name;
+            let slug = mm.generate_bot_username_from(customer_name);
+            let icon_url = format!(
+                "{}/api/v4/users/username/{}/image",
+                state.config.mattermost_url.trim_end_matches('/'),
+                slug
+            );
 
-            match mm.get_or_create_customer_bot(cust_id, customer_name, &channel_id).await {
-                Ok((bot_uid, bot_token)) => {
-                    let root = root_id.as_deref();
-                    match mm.post_message_as_bot(&channel_id, text, root, ts, &bot_uid, &bot_token).await {
-                        Ok(post_id) => {
-                            if root_id.is_none() {
-                                mm.set_root_id(&conversation_id, &post_id);
-                                root_id = Some(post_id);
-                            }
-                            posted += 1;
-                        }
-                        Err(e) => {
-                            tracing::warn!("Reimport: bot post failed for {}: {}", conversation_id, e);
-                            let root = root_id.as_deref();
-                            if let Ok(post_id) = mm.post_message(&channel_id, text, root, ts).await {
-                                if root_id.is_none() {
-                                    mm.set_root_id(&conversation_id, &post_id);
-                                    root_id = Some(post_id);
-                                }
-                                posted += 1;
-                            }
-                        }
+            let root = root_id.as_deref();
+            match mm.post_message_with_override(&channel_id, text, root, ts, Some(&slug), Some(&icon_url)).await {
+                Ok(post_id) => {
+                    if root_id.is_none() {
+                        mm.set_root_id(&conversation_id, &post_id);
+                        root_id = Some(post_id);
                     }
+                    posted += 1;
                 }
                 Err(e) => {
-                    tracing::warn!("Reimport: bot creation failed for {}: {}", cust_id, e);
+                    tracing::warn!("Reimport: override post failed for {}: {}", conversation_id, e);
                     let root = root_id.as_deref();
                     if let Ok(post_id) = mm.post_message(&channel_id, text, root, ts).await {
                         if root_id.is_none() {
@@ -1077,18 +1056,9 @@ async fn reimport_single_conversation(
     let total = messages.len();
     tracing::info!("Reimport: fetched {} messages for conversation {}", total, conversation_id);
 
-    let mut incoming: Vec<&crate::models::GraphMessage> = Vec::new();
-    let mut outgoing: Vec<&crate::models::GraphMessage> = Vec::new();
-    for msg in &messages {
-        if msg.from.id == state.config.facebook_page_id {
-            outgoing.push(msg);
-        } else {
-            incoming.push(msg);
-        }
-    }
-    let ordered: Vec<&crate::models::GraphMessage> = incoming.into_iter().chain(outgoing.into_iter()).collect();
-
-    let display_name = ordered
+    let mut messages = messages;
+    messages.sort_by_key(|m| m.created_time);
+    let display_name = messages
         .iter()
         .find_map(|msg| {
             if msg.from.id != state.config.facebook_page_id {
@@ -1104,9 +1074,8 @@ async fn reimport_single_conversation(
     let mut posted = 0u32;
     let mut root_id: Option<String> = None;
 
-    for msg in ordered {
+    for msg in &messages {
         let is_from_page = msg.from.id == state.config.facebook_page_id;
-        let direction = if is_from_page { "outgoing" } else { "incoming" };
         let text = match &msg.message {
             Some(t) if !t.trim().is_empty() => t.as_str(),
             _ => continue,
@@ -1114,36 +1083,26 @@ async fn reimport_single_conversation(
 
         let ts = Some(msg.created_time.timestamp_millis());
 
-        if direction == "incoming" {
-            let cust_id = &msg.from.id;
+        if !is_from_page {
             let customer_name = &msg.from.name;
+            let slug = mm.generate_bot_username_from(&customer_name);
+            let icon_url = format!(
+                "{}/api/v4/users/username/{}/image",
+                state.config.mattermost_url.trim_end_matches('/'),
+                slug
+            );
 
-            match mm.get_or_create_customer_bot(cust_id, customer_name, channel_id).await {
-                Ok((bot_uid, bot_token)) => {
-                    let root = root_id.as_deref();
-                    match mm.post_message_as_bot(channel_id, text, root, ts, &bot_uid, &bot_token).await {
-                        Ok(post_id) => {
-                            if root_id.is_none() {
-                                mm.set_root_id(conversation_id, &post_id);
-                                root_id = Some(post_id);
-                            }
-                            posted += 1;
-                        }
-                        Err(e) => {
-                            tracing::warn!("Reimport: bot post failed for {}: {}", conversation_id, e);
-                            let root = root_id.as_deref();
-                            if let Ok(post_id) = mm.post_message(channel_id, text, root, ts).await {
-                                if root_id.is_none() {
-                                    mm.set_root_id(conversation_id, &post_id);
-                                    root_id = Some(post_id);
-                                }
-                                posted += 1;
-                            }
-                        }
+            let root = root_id.as_deref();
+            match mm.post_message_with_override(channel_id, text, root, ts, Some(&slug), Some(&icon_url)).await {
+                Ok(post_id) => {
+                    if root_id.is_none() {
+                        mm.set_root_id(conversation_id, &post_id);
+                        root_id = Some(post_id);
                     }
+                    posted += 1;
                 }
                 Err(e) => {
-                    tracing::warn!("Reimport: bot creation failed for {}: {}", cust_id, e);
+                    tracing::warn!("Reimport: override post failed for {}: {}", conversation_id, e);
                     let root = root_id.as_deref();
                     if let Ok(post_id) = mm.post_message(channel_id, text, root, ts).await {
                         if root_id.is_none() {

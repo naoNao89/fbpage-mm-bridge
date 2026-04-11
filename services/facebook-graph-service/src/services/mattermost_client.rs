@@ -438,6 +438,19 @@ impl MattermostClient {
         root_id: Option<&str>,
         create_at: Option<i64>,
     ) -> Result<String> {
+        self.post_message_with_override(channel_id, message, root_id, create_at, None, None)
+            .await
+    }
+
+    pub async fn post_message_with_override(
+        &self,
+        channel_id: &str,
+        message: &str,
+        root_id: Option<&str>,
+        create_at: Option<i64>,
+        override_username: Option<&str>,
+        override_icon_url: Option<&str>,
+    ) -> Result<String> {
         if message.trim().is_empty() {
             return Err(anyhow::anyhow!("Skipping empty message post"));
         }
@@ -470,6 +483,23 @@ impl MattermostClient {
                 "create_at".to_string(),
                 serde_json::Value::Number(ts.into()),
             );
+        }
+
+        if override_username.is_some() || override_icon_url.is_some() {
+            let mut props = serde_json::json!({});
+            if let Some(uname) = override_username {
+                props.as_object_mut().unwrap().insert(
+                    "override_username".to_string(),
+                    serde_json::Value::String(uname.to_string()),
+                );
+            }
+            if let Some(icon) = override_icon_url {
+                props.as_object_mut().unwrap().insert(
+                    "override_icon".to_string(),
+                    serde_json::Value::String(icon.to_string()),
+                );
+            }
+            payload.as_object_mut().unwrap().insert("props".to_string(), props);
         }
 
         let resp = self
@@ -765,6 +795,10 @@ impl MattermostClient {
     }
 
     fn generate_bot_username(&self, display_name: &str) -> String {
+        Self::generate_bot_username_from(display_name)
+    }
+
+    pub fn generate_bot_username_from(display_name: &str) -> String {
         let ascii: String = display_name
             .to_lowercase()
             .chars()
