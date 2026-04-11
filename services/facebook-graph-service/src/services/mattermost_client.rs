@@ -24,6 +24,16 @@ struct PostResponse {
     id: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct BotResponse {
+    user_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TokenResponse {
+    token: String,
+}
+
 /// Mattermost REST API client
 #[derive(Clone)]
 pub struct MattermostClient {
@@ -36,6 +46,10 @@ pub struct MattermostClient {
 
     channel_cache: Arc<Mutex<HashMap<String, String>>>, // conversation_id -> channel_id
     root_cache: Arc<Mutex<HashMap<String, String>>>,    // conversation_id -> root_post_id
+    display_name_cache: Arc<Mutex<HashMap<String, String>>>,
+    bot_user_cache: Arc<Mutex<HashMap<String, String>>>,   // platform_user_id -> bot_user_id
+    bot_token_cache: Arc<Mutex<HashMap<String, String>>>,  // bot_user_id -> bot_token
+    posted_ids: Arc<Mutex<std::collections::HashSet<String>>>, // external_id already posted to MM
 }
 
 impl MattermostClient {
@@ -50,6 +64,10 @@ impl MattermostClient {
             pool: None,
             channel_cache: Arc::new(Mutex::new(HashMap::new())),
             root_cache: Arc::new(Mutex::new(HashMap::new())),
+            display_name_cache: Arc::new(Mutex::new(HashMap::new())),
+            bot_user_cache: Arc::new(Mutex::new(HashMap::new())),
+            bot_token_cache: Arc::new(Mutex::new(HashMap::new())),
+            posted_ids: Arc::new(Mutex::new(std::collections::HashSet::new())),
         }
     }
 
@@ -134,6 +152,13 @@ impl MattermostClient {
         Ok(())
     }
 
+    pub fn mark_posted(&self, external_id: &str) -> bool {
+        self.posted_ids
+            .lock()
+            .expect("posted_ids poisoned")
+            .insert(external_id.to_string())
+    }
+
     /// Ensure a valid token is available
     pub async fn ensure_token(&self) -> Result<()> {
         let needs_login = self.token.lock().expect("token lock poisoned").is_none();
@@ -144,7 +169,7 @@ impl MattermostClient {
     }
 
     /// Get authorization header value, logging in if needed
-    async fn get_auth_header(&self) -> Result<String> {
+    pub async fn get_auth_header(&self) -> Result<String> {
         let needs_login = self.token.lock().expect("token lock poisoned").is_none();
         if needs_login {
             self.login().await?;
@@ -196,7 +221,6 @@ impl MattermostClient {
         conversation_id: &str,
         display_name: &str,
     ) -> Result<String> {
-        // Check cache first
         if let Some(cid) = self
             .channel_cache
             .lock()
@@ -475,7 +499,7 @@ impl MattermostClient {
     ) -> Result<Option<String>> {
         let auth = self.get_auth_header().await?;
         let url = format!(
-            "{}/api/v4/channels/{channel_id}/posts?per_page=10",
+            "{}/api/v4/channels/{channel_id}/posts?per_page=50",
             self.base_url
         );
 
@@ -581,6 +605,11 @@ impl MattermostClient {
 
     /// List all channels for a team, filtered by name prefix.
     /// Used by the bot to discover channels that correspond to FB conversations.
+    pub async fn get_all_t_channels(&self) -> Result<Vec<ChannelInfo>> {
+        let team_id = self.get_team_id().await?;
+        self.list_channels_by_prefix(&team_id, "t_").await
+    }
+
     pub async fn list_channels_by_prefix(
         &self,
         team_id: &str,
@@ -620,12 +649,540 @@ impl MattermostClient {
             .collect())
     }
 
+    pub async fn get_or_create_customer_bot(
+        &self,
+        platform_user_id: &str,
+        display_name: &str,
+        channel_id: &str,
+    ) -> Result<(String, String)> {
+        let cached = {
+            let uid = self
+                .bot_user_cache
+                .lock()
+                .expect("bot_user_cache poisoned")
+                .get(platform_user_id)
+                .cloned();
+            let token = uid.as_ref().and_then(|id| {
+                self.bot_token_cache
+                    .lock()
+                    .expect("bot_token_cache poisoned")
+                    .get(id)
+                    .cloned()
+            });
+            uid.zip(token)
+        };
+
+        if let Some((bot_user_id, token)) = cached {
+            let auth = self.get_auth_header().await.ok();
+            if let Some(auth) = &auth {
+                let _ = self.add_user_to_channel(channel_id, &bot_user_id, auth).await;
+            }
+            return Ok((bot_user_id, token));
+        }
+
+        let auth = self.get_auth_header().await?;
+        let team_id = self.get_team_id().await?;
+
+        let slug = self.generate_bot_username(display_name);
+
+        let create_url = format!("{}/api/v4/bots", self.base_url);
+        let payload = serde_json::json!({
+            "username": slug,
+            "display_name": display_name,
+            "description": "FB Page customer"
+        });
+
+        let resp = self
+            .client
+            .post(&create_url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to create customer bot")?;
+
+        let bot_user_id = if resp.status().is_success() {
+            let bot: BotResponse = resp.json().await.context("Failed to parse bot response")?;
+            bot.user_id
+        } else {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if body.contains("already exists") || body.contains("must be unique") {
+                tracing::info!("Bot username {slug} already exists, resolving existing bot");
+                self.resolve_bot_user_by_username(&slug).await?
+            } else {
+                return Err(anyhow::anyhow!("Bot creation failed {status}: {body}"));
+            }
+        };
+
+        if let Err(e) = self.enable_bot_and_add_to_team(&bot_user_id, &team_id, channel_id, &auth).await {
+            tracing::warn!("Bot enable/team/channel setup failed for {slug}: {e}, will retry channel add later");
+        }
+
+        let token_url = format!(
+            "{}/api/v4/users/{bot_user_id}/tokens",
+            self.base_url
+        );
+        let token_payload = serde_json::json!({
+            "description": "customer bot token"
+        });
+        let token_resp = self
+            .client
+            .post(&token_url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .json(&token_payload)
+            .send()
+            .await
+            .context("Failed to create bot token")?;
+
+        let bot_token = if token_resp.status().is_success() {
+            let tr: TokenResponse = token_resp
+                .json()
+                .await
+                .context("Failed to parse token response")?;
+            tr.token
+        } else {
+            let status = token_resp.status();
+            let body = token_resp.text().await.unwrap_or_default();
+            tracing::warn!("Failed to create bot token for {bot_user_id}: {status} {body}");
+            return Err(anyhow::anyhow!("Bot token creation failed {status}: {body}"));
+        };
+
+        self.bot_user_cache
+            .lock()
+            .expect("bot_user_cache poisoned")
+            .insert(platform_user_id.to_string(), bot_user_id.clone());
+        self.bot_token_cache
+            .lock()
+            .expect("bot_token_cache poisoned")
+            .insert(bot_user_id.clone(), bot_token.clone());
+
+        tracing::info!("Created customer bot {slug} (user_id={bot_user_id}) for channel {channel_id}");
+
+        let _ = self.add_user_to_channel(channel_id, &bot_user_id, &auth).await;
+
+        Ok((bot_user_id, bot_token))
+    }
+
+    fn generate_bot_username(&self, display_name: &str) -> String {
+        let ascii: String = display_name
+            .to_lowercase()
+            .chars()
+            .map(|c| {
+                match c {
+                    'á' | 'à' | 'ả' | 'ã' | 'ạ' | 'ă' | 'ắ' | 'ằ' | 'ẳ' | 'ẵ' | 'ặ' | 'â' | 'ấ' | 'ầ' | 'ẩ' | 'ẫ' | 'ậ' => 'a',
+                    'đ' => 'd',
+                    'é' | 'è' | 'ẻ' | 'ẽ' | 'ẹ' | 'ê' | 'ế' | 'ề' | 'ể' | 'ễ' | 'ệ' => 'e',
+                    'í' | 'ì' | 'ỉ' | 'ĩ' | 'ị' => 'i',
+                    'ó' | 'ò' | 'ỏ' | 'õ' | 'ọ' | 'ô' | 'ố' | 'ồ' | 'ổ' | 'ỗ' | 'ộ' | 'ơ' | 'ớ' | 'ờ' | 'ở' | 'ỡ' | 'ợ' => 'o',
+                    'ú' | 'ù' | 'ủ' | 'ũ' | 'ụ' | 'ư' | 'ứ' | 'ừ' | 'ử' | 'ữ' | 'ự' => 'u',
+                    'ý' | 'ỳ' | 'ỷ' | 'ỹ' | 'ỵ' => 'y',
+                    _ => c,
+                }
+            })
+            .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == ' ' || *c == '-')
+            .collect::<String>();
+
+        let slug: String = ascii
+            .split(|c: char| c == ' ')
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("-");
+
+        let slug: String = slug
+            .chars()
+            .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-')
+            .collect();
+
+        let min_len = 3;
+        let max_len = 22;
+        if slug.len() < min_len {
+            return format!("cust-{}", slug);
+        }
+        if slug.len() > max_len {
+            return slug[..max_len].to_string();
+        }
+        slug
+    }
+
+    async fn resolve_bot_user_by_username(&self, username: &str) -> Result<String> {
+        let auth = self.get_auth_header().await?;
+        let url = format!(
+            "{}/api/v4/users/username/{username}",
+            self.base_url
+        );
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await
+            .context("Failed to resolve bot user")?;
+
+        if resp.status().is_success() {
+            let user: serde_json::Value = resp.json().await.context("Failed to parse user")?;
+            user.get("id")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .ok_or_else(|| anyhow::anyhow!("No user ID in response"))
+        } else {
+            Err(anyhow::anyhow!("Bot user not found: {username}"))
+        }
+    }
+
+    async fn enable_bot_and_add_to_team(
+        &self,
+        bot_user_id: &str,
+        team_id: &str,
+        channel_id: &str,
+        auth: &str,
+    ) -> Result<()> {
+        let enable_url = format!("{}/api/v4/bots/{bot_user_id}/enable", self.base_url);
+        let enable_resp = self
+            .client
+            .post(&enable_url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await;
+
+        match enable_resp {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::info!("Enabled bot {bot_user_id}");
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                if !body.contains("already enabled") {
+                    tracing::warn!("Failed to enable bot {bot_user_id}: {status} {body}");
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to enable bot {bot_user_id}: {e}");
+            }
+        }
+
+        let team_member_url = format!(
+            "{}/api/v4/teams/{team_id}/members",
+            self.base_url
+        );
+        let team_payload = serde_json::json!({
+            "user_id": bot_user_id,
+            "team_id": team_id,
+        });
+        let team_resp = self
+            .client
+            .post(&team_member_url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .json(&team_payload)
+            .send()
+            .await;
+
+        match team_resp {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::info!("Added bot {bot_user_id} to team {team_id}");
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                if !body.contains("already exists") && !body.contains("team_member") {
+                    tracing::warn!("Failed to add bot {bot_user_id} to team {team_id}: {status} {body}");
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to add bot {bot_user_id} to team {team_id}: {e}");
+            }
+        }
+
+        self.add_user_to_channel(channel_id, bot_user_id, auth).await?;
+
+        Ok(())
+    }
+
+    pub async fn post_message_as_bot(
+        &self,
+        channel_id: &str,
+        message: &str,
+        root_id: Option<&str>,
+        create_at: Option<i64>,
+        bot_user_id: &str,
+        bot_token: &str,
+    ) -> Result<String> {
+        if message.trim().is_empty() {
+            return Err(anyhow::anyhow!("Skipping empty message post"));
+        }
+
+        if let Some(existing_id) = self
+            .find_duplicate_post(channel_id, message, create_at)
+            .await?
+        {
+            tracing::info!(
+                "Skipping duplicate bot post in channel {channel_id}: message already exists as {existing_id}"
+            );
+            return Err(anyhow::anyhow!("Duplicate post skipped: {existing_id}"));
+        }
+
+        let url = format!("{}/api/v4/posts", self.base_url);
+        let mut payload = serde_json::json!({
+            "channel_id": channel_id,
+            "message": message,
+        });
+        if let Some(rid) = root_id {
+            payload.as_object_mut().unwrap().insert(
+                "root_id".to_string(),
+                serde_json::Value::String(rid.to_string()),
+            );
+        }
+        if let Some(ts) = create_at {
+            payload.as_object_mut().unwrap().insert(
+                "create_at".to_string(),
+                serde_json::Value::Number(ts.into()),
+            );
+        }
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {bot_token}"))
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to post message as bot")?;
+
+        if resp.status().is_success() {
+            let post: PostResponse = resp.json().await.context("Failed to parse post response")?;
+            return Ok(post.id);
+        }
+
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+
+        if status.as_u16() == 403 {
+            tracing::warn!("Bot {bot_user_id} got 403 posting to channel {channel_id}, re-adding to channel and retrying");
+
+            let auth = self.get_auth_header().await?;
+            let _ = self.add_user_to_channel(channel_id, bot_user_id, &auth).await;
+
+            let retry_resp = self
+                .client
+                .post(&url)
+                .header("Authorization", format!("Bearer {bot_token}"))
+                .json(&payload)
+                .send()
+                .await
+                .context("Failed to retry post message as bot")?;
+
+            if retry_resp.status().is_success() {
+                let post: PostResponse = retry_resp.json().await.context("Failed to parse post response")?;
+                tracing::info!("Bot {bot_user_id} retry post succeeded to channel {channel_id}");
+                return Ok(post.id);
+            }
+
+            let retry_status = retry_resp.status();
+            let retry_body = retry_resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Bot post failed after retry {retry_status}: {retry_body}"));
+        }
+
+        Err(anyhow::anyhow!("Bot post failed {status}: {body}"))
+    }
+
     fn set_channel_cache(&self, conversation_id: &str, channel_id: &str) {
         self.channel_cache
             .lock()
             .expect("channel_cache poisoned")
             .insert(conversation_id.to_string(), channel_id.to_string());
         self.persist_cache_entry("channel", conversation_id, channel_id);
+    }
+
+    fn set_display_name_cache(&self, conversation_id: &str, display_name: &str) {
+        self.display_name_cache
+            .lock()
+            .expect("display_name_cache poisoned")
+            .insert(conversation_id.to_string(), display_name.to_string());
+    }
+
+    pub async fn maybe_update_display_name(
+        &self,
+        channel_id: &str,
+        conversation_id: &str,
+        desired_display_name: &str,
+    ) -> Result<()> {
+        if desired_display_name.is_empty() {
+            return Ok(());
+        }
+
+        let cached = self
+            .display_name_cache
+            .lock()
+            .expect("display_name_cache poisoned")
+            .get(conversation_id)
+            .cloned();
+
+        if cached.as_deref() == Some(desired_display_name) {
+            return Ok(());
+        }
+
+        if let Err(e) = self
+            .update_channel_display_name(channel_id, desired_display_name)
+            .await
+        {
+            tracing::warn!("Failed to update display_name for channel {channel_id}: {e}");
+        } else {
+            self.set_display_name_cache(conversation_id, desired_display_name);
+        }
+
+        Ok(())
+    }
+
+    pub async fn update_channel_display_name(
+        &self,
+        channel_id: &str,
+        display_name: &str,
+    ) -> Result<()> {
+        let auth = self.get_auth_header().await?;
+        let url = format!("{}/api/v4/channels/{channel_id}/patch", self.base_url);
+        let payload = serde_json::json!({
+            "display_name": display_name,
+        });
+
+        let resp = self
+            .client
+            .put(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to update channel display_name")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "Mattermost display_name update failed {status}: {body}"
+            ));
+        }
+
+        tracing::info!("Updated display_name for channel {channel_id} to '{display_name}'");
+        Ok(())
+    }
+
+    pub async fn ensure_bot_membership(&self, channel_id: &str) -> Result<()> {
+        let auth = self.get_auth_header().await?;
+        let bot_user_id = self.resolve_bot_user_id().await?;
+        self.add_user_to_channel(channel_id, &bot_user_id, &auth).await
+    }
+
+    async fn add_user_to_channel(
+        &self,
+        channel_id: &str,
+        user_id: &str,
+        auth: &str,
+    ) -> Result<()> {
+        let url = format!("{}/api/v4/channels/{channel_id}/members", self.base_url);
+        let payload = serde_json::json!({
+            "user_id": user_id,
+        });
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to add user to channel")?;
+
+        if resp.status().is_success() {
+            tracing::info!("Added user {user_id} to channel {channel_id}");
+            self.cleanup_system_message(channel_id, auth).await;
+        } else if resp.status().as_u16() == 400 {
+            tracing::debug!("User {user_id} already a member of channel {channel_id}");
+        } else {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            tracing::warn!("Could not add user {user_id} to channel {channel_id}: {status} {body}");
+        }
+
+        Ok(())
+    }
+
+    async fn cleanup_system_message(&self, channel_id: &str, auth: &str) {
+        let url = format!(
+            "{}/api/v4/channels/{channel_id}/posts?per_page=3",
+            self.base_url
+        );
+        let resp = match self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+
+        let data: serde_json::Value = match resp.json().await {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+
+        let posts = match data.get("posts").and_then(|p| p.as_object()) {
+            Some(p) => p,
+            None => return,
+        };
+
+        let admin_id = match self.resolve_bot_user_id().await.ok() {
+            Some(id) => id,
+            None => return,
+        };
+
+        for (_, post) in posts {
+            let ptype = post.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            let uid = post.get("user_id").and_then(|u| u.as_str()).unwrap_or("");
+            let pid = post.get("id").and_then(|i| i.as_str()).unwrap_or("");
+            if (ptype.starts_with("system_") || ptype == "system_join_channel")
+                && uid == admin_id
+                && !pid.is_empty()
+            {
+                let del_url = format!("{}/api/v4/posts/{pid}", self.base_url);
+                let _ = self
+                    .client
+                    .delete(&del_url)
+                    .header("Authorization", format!("Bearer {auth}"))
+                    .send()
+                    .await;
+                tracing::debug!("Cleaned up system message {pid} in channel {channel_id}");
+                break;
+            }
+        }
+    }
+
+    async fn resolve_bot_user_id(&self) -> Result<String> {
+        let auth = self.get_auth_header().await?;
+        let url = format!("{}/api/v4/users/username/{}", self.base_url, self.username);
+
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await
+            .context("Failed to fetch bot user ID")?;
+
+        if resp.status().is_success() {
+            let user: serde_json::Value =
+                resp.json().await.context("Failed to parse user response")?;
+            user.get("id")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .ok_or_else(|| anyhow::anyhow!("No user ID in response"))
+        } else {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            Err(anyhow::anyhow!(
+                "Failed to resolve bot user ID: {status} {body}"
+            ))
+        }
     }
 
     fn persist_cache_entry(&self, key_type: &str, conversation_id: &str, value: &str) {

@@ -28,7 +28,8 @@ use sqlx::PgPool;
 use crate::config::Config;
 use crate::handlers::{
     exchange_token, get_import_status, health_check, import_all_conversations,
-    import_single_conversation, webhook_handler, webhook_verification,
+    import_single_conversation, reimport_all_conversations, reimport_conversation,
+    webhook_handler, webhook_verification,
 };
 use crate::services::{CustomerServiceClient, MattermostClient, MessageServiceClient};
 
@@ -55,6 +56,8 @@ pub fn create_app(state: AppState) -> Router {
             "/api/import/conversation/:id",
             post(import_single_conversation),
         )
+        .route("/api/reimport/:id", post(reimport_conversation))
+        .route("/api/reimport", post(reimport_all_conversations))
         .route("/api/status", get(get_import_status))
         .route("/api/token/exchange", post(exchange_token))
         .with_state(state)
