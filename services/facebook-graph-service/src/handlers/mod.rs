@@ -887,7 +887,7 @@ pub async fn reimport_conversation(
 
         if !is_from_page {
             let customer_name = &msg.from.name;
-            let slug = mm.generate_bot_username_from(customer_name);
+            let slug = crate::services::MattermostClient::generate_bot_username_from(customer_name);
             let icon_url = format!(
                 "{}/api/v4/users/username/{}/image",
                 state.config.mattermost_url.trim_end_matches('/'),
@@ -1085,7 +1085,7 @@ async fn reimport_single_conversation(
 
         if !is_from_page {
             let customer_name = &msg.from.name;
-            let slug = mm.generate_bot_username_from(&customer_name);
+            let slug = crate::services::MattermostClient::generate_bot_username_from(&customer_name);
             let icon_url = format!(
                 "{}/api/v4/users/username/{}/image",
                 state.config.mattermost_url.trim_end_matches('/'),
