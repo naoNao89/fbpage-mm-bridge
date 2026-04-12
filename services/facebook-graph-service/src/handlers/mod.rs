@@ -1,7 +1,11 @@
 //! HTTP handlers for the Facebook Graph Service
 
 use anyhow::Context;
-use axum::{extract::{Path, State}, http::StatusCode, Json};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
@@ -170,7 +174,10 @@ async fn post_to_mattermost(
 
         if direction == "incoming" {
             if let Some(psid) = customer_platform_id {
-                match mm.get_or_create_customer_bot(psid, display_name, &channel_id).await {
+                match mm
+                    .get_or_create_customer_bot(psid, display_name, &channel_id)
+                    .await
+                {
                     Ok((bot_user_id, bot_token)) => {
                         let root = if let Some(r) = root_id {
                             Some(r.to_string())
@@ -684,7 +691,10 @@ pub async fn process_conversation(
                         let ts = Some(msg.created_time.timestamp_millis());
 
                         if direction == "incoming" {
-                            match mm.get_or_create_customer_bot(&cust_id, display_name, &channel_id).await {
+                            match mm
+                                .get_or_create_customer_bot(&cust_id, display_name, &channel_id)
+                                .await
+                            {
                                 Ok((bot_uid, bot_token)) => {
                                     match mm
                                         .post_message_as_bot(
@@ -783,7 +793,10 @@ pub async fn reimport_conversation(
     Path(conversation_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let mm = &state.mattermost_client;
-    let team_id = mm.get_team_id().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let team_id = mm
+        .get_team_id()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Get or create channel
     let channel_id = mm
@@ -792,17 +805,16 @@ pub async fn reimport_conversation(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Delete all existing posts in the channel
-    let auth = mm.get_auth_header().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let auth = mm
+        .get_auth_header()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let client = reqwest::Client::new();
     let mut deleted = 0u32;
     let mut page = 0u32;
+    let base = state.config.mattermost_url.trim_end_matches('/');
     loop {
-        let url = format!(
-            "{}/api/v4/channels/{}/posts?per_page=200&page={}",
-            state.config.mattermost_url.trim_end_matches('/'),
-            channel_id,
-            page
-        );
+        let url = format!("{base}/api/v4/channels/{channel_id}/posts?per_page=200&page={page}",);
         let resp = client
             .get(&url)
             .header("Authorization", format!("Bearer {auth}"))
@@ -826,12 +838,9 @@ pub async fn reimport_conversation(
 
         for (_, post) in posts {
             if let Some(pid) = post.get("id").and_then(|i| i.as_str()) {
-                let del_url = format!(
-                    "{}/api/v4/posts/{}",
-                    state.config.mattermost_url.trim_end_matches('/'),
-                    pid
-                );
-                let _ = client.delete(&del_url)
+                let del_url = format!("{base}/api/v4/posts/{pid}");
+                let _ = client
+                    .delete(&del_url)
                     .header("Authorization", format!("Bearer {auth}"))
                     .send()
                     .await;
@@ -842,7 +851,11 @@ pub async fn reimport_conversation(
         page += 1;
     }
 
-    tracing::info!("Reimport: deleted {} posts from channel {}", deleted, conversation_id);
+    tracing::info!(
+        "Reimport: deleted {} posts from channel {}",
+        deleted,
+        conversation_id
+    );
 
     // Fetch messages from Facebook Graph API
     let messages = crate::graph_api::get_conversation_messages(
@@ -854,7 +867,11 @@ pub async fn reimport_conversation(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let total = messages.len();
-    tracing::info!("Reimport: fetched {} messages for conversation {}", total, conversation_id);
+    tracing::info!(
+        "Reimport: fetched {} messages for conversation {}",
+        total,
+        conversation_id
+    );
 
     // Sort: incoming first, then outgoing
     let mut messages = messages;
@@ -871,7 +888,9 @@ pub async fn reimport_conversation(
         })
         .unwrap_or_else(|| conversation_id.to_string());
 
-    let _ = mm.maybe_update_display_name(&channel_id, &conversation_id, &display_name).await;
+    let _ = mm
+        .maybe_update_display_name(&channel_id, &conversation_id, &display_name)
+        .await;
 
     let mut posted = 0u32;
     let mut root_id: Option<String> = None;
@@ -888,10 +907,16 @@ pub async fn reimport_conversation(
         let customer_name = &msg.from.name;
         let cust_id = &msg.from.id;
 
-        match mm.get_or_create_customer_bot(cust_id, customer_name, &channel_id).await {
+        match mm
+            .get_or_create_customer_bot(cust_id, customer_name, &channel_id)
+            .await
+        {
             Ok((bot_uid, bot_token)) => {
                 let root = root_id.as_deref();
-                match mm.post_message_as_bot(&channel_id, text, root, None, &bot_uid, &bot_token).await {
+                match mm
+                    .post_message_as_bot(&channel_id, text, root, None, &bot_uid, &bot_token)
+                    .await
+                {
                     Ok(post_id) => {
                         if root_id.is_none() {
                             mm.set_root_id(&conversation_id, &post_id);
@@ -957,10 +982,16 @@ pub async fn reimport_conversation(
 pub async fn reimport_all_conversations(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let channels = state.mattermost_client.get_all_t_channels().await
+    let channels = state
+        .mattermost_client
+        .get_all_t_channels()
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let total = channels.len();
-    info!("Reimport-all: starting background reimport of {} channels", total);
+    info!(
+        "Reimport-all: starting background reimport of {} channels",
+        total
+    );
 
     tokio::spawn(async move {
         let mut total_deleted = 0u32;
@@ -970,7 +1001,12 @@ pub async fn reimport_all_conversations(
 
         for (idx, channel) in channels.iter().enumerate() {
             let conv_id = &channel.name;
-            info!("Reimport-all [{}/{}]: processing {}", idx + 1, total, conv_id);
+            info!(
+                "Reimport-all [{}/{}]: processing {}",
+                idx + 1,
+                total,
+                conv_id
+            );
 
             match reimport_single_conversation(&state, conv_id, &channel.id).await {
                 Ok(result) => {
@@ -1015,13 +1051,9 @@ async fn reimport_single_conversation(
     let client = reqwest::Client::new();
     let mut deleted = 0u32;
     let mut page = 0u32;
+    let base = state.config.mattermost_url.trim_end_matches('/');
     loop {
-        let url = format!(
-            "{}/api/v4/channels/{}/posts?per_page=200&page={}",
-            state.config.mattermost_url.trim_end_matches('/'),
-            channel_id,
-            page
-        );
+        let url = format!("{base}/api/v4/channels/{channel_id}/posts?per_page=200&page={page}",);
         let resp = client
             .get(&url)
             .header("Authorization", format!("Bearer {auth}"))
@@ -1045,12 +1077,9 @@ async fn reimport_single_conversation(
 
         for (_, post) in posts {
             if let Some(pid) = post.get("id").and_then(|i| i.as_str()) {
-                let del_url = format!(
-                    "{}/api/v4/posts/{}",
-                    state.config.mattermost_url.trim_end_matches('/'),
-                    pid
-                );
-                let _ = client.delete(&del_url)
+                let del_url = format!("{base}/api/v4/posts/{pid}");
+                let _ = client
+                    .delete(&del_url)
                     .header("Authorization", format!("Bearer {auth}"))
                     .send()
                     .await;
@@ -1061,7 +1090,11 @@ async fn reimport_single_conversation(
         page += 1;
     }
 
-    tracing::info!("Reimport: deleted {} posts from channel {}", deleted, conversation_id);
+    tracing::info!(
+        "Reimport: deleted {} posts from channel {}",
+        deleted,
+        conversation_id
+    );
 
     let messages = crate::graph_api::get_conversation_messages(
         &state.pool,
@@ -1072,7 +1105,11 @@ async fn reimport_single_conversation(
     .map_err(|e| anyhow::anyhow!("Failed to fetch messages: {e}"))?;
 
     let total = messages.len();
-    tracing::info!("Reimport: fetched {} messages for conversation {}", total, conversation_id);
+    tracing::info!(
+        "Reimport: fetched {} messages for conversation {}",
+        total,
+        conversation_id
+    );
 
     let mut messages = messages;
     messages.sort_by_key(|m| m.created_time);
@@ -1087,7 +1124,9 @@ async fn reimport_single_conversation(
         })
         .unwrap_or_else(|| conversation_id.to_string());
 
-    let _ = mm.maybe_update_display_name(channel_id, conversation_id, &display_name).await;
+    let _ = mm
+        .maybe_update_display_name(channel_id, conversation_id, &display_name)
+        .await;
 
     let mut posted = 0u32;
     let mut root_id: Option<String> = None;
@@ -1104,10 +1143,16 @@ async fn reimport_single_conversation(
         let customer_name = &msg.from.name;
         let cust_id = &msg.from.id;
 
-        match mm.get_or_create_customer_bot(cust_id, customer_name, channel_id).await {
+        match mm
+            .get_or_create_customer_bot(cust_id, customer_name, channel_id)
+            .await
+        {
             Ok((bot_uid, bot_token)) => {
                 let root = root_id.as_deref();
-                match mm.post_message_as_bot(channel_id, text, root, None, &bot_uid, &bot_token).await {
+                match mm
+                    .post_message_as_bot(channel_id, text, root, None, &bot_uid, &bot_token)
+                    .await
+                {
                     Ok(post_id) => {
                         if root_id.is_none() {
                             mm.set_root_id(conversation_id, &post_id);

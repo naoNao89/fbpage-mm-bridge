@@ -28,8 +28,8 @@ use sqlx::PgPool;
 use crate::config::Config;
 use crate::handlers::{
     exchange_token, get_import_status, health_check, import_all_conversations,
-    import_single_conversation, reimport_all_conversations, reimport_conversation,
-    webhook_handler, webhook_verification,
+    import_single_conversation, reimport_all_conversations, reimport_conversation, webhook_handler,
+    webhook_verification,
 };
 use crate::services::{CustomerServiceClient, MattermostClient, MessageServiceClient};
 

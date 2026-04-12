@@ -47,8 +47,8 @@ pub struct MattermostClient {
     channel_cache: Arc<Mutex<HashMap<String, String>>>, // conversation_id -> channel_id
     root_cache: Arc<Mutex<HashMap<String, String>>>,    // conversation_id -> root_post_id
     display_name_cache: Arc<Mutex<HashMap<String, String>>>,
-    bot_user_cache: Arc<Mutex<HashMap<String, String>>>,   // platform_user_id -> bot_user_id
-    bot_token_cache: Arc<Mutex<HashMap<String, String>>>,  // bot_user_id -> bot_token
+    bot_user_cache: Arc<Mutex<HashMap<String, String>>>, // platform_user_id -> bot_user_id
+    bot_token_cache: Arc<Mutex<HashMap<String, String>>>, // bot_user_id -> bot_token
     posted_ids: Arc<Mutex<std::collections::HashSet<String>>>, // external_id already posted to MM
 }
 
@@ -499,7 +499,10 @@ impl MattermostClient {
                     serde_json::Value::String(icon.to_string()),
                 );
             }
-            payload.as_object_mut().unwrap().insert("props".to_string(), props);
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("props".to_string(), props);
         }
 
         let resp = self
@@ -705,7 +708,9 @@ impl MattermostClient {
         if let Some((bot_user_id, token)) = cached {
             let auth = self.get_auth_header().await.ok();
             if let Some(auth) = &auth {
-                let _ = self.add_user_to_channel(channel_id, &bot_user_id, auth).await;
+                let _ = self
+                    .add_user_to_channel(channel_id, &bot_user_id, auth)
+                    .await;
             }
             return Ok((bot_user_id, token));
         }
@@ -745,14 +750,14 @@ impl MattermostClient {
             }
         };
 
-        if let Err(e) = self.enable_bot_and_add_to_team(&bot_user_id, &team_id, channel_id, &auth).await {
+        if let Err(e) = self
+            .enable_bot_and_add_to_team(&bot_user_id, &team_id, channel_id, &auth)
+            .await
+        {
             tracing::warn!("Bot enable/team/channel setup failed for {slug}: {e}, will retry channel add later");
         }
 
-        let token_url = format!(
-            "{}/api/v4/users/{bot_user_id}/tokens",
-            self.base_url
-        );
+        let token_url = format!("{}/api/v4/users/{bot_user_id}/tokens", self.base_url);
         let token_payload = serde_json::json!({
             "description": "customer bot token"
         });
@@ -775,7 +780,9 @@ impl MattermostClient {
             let status = token_resp.status();
             let body = token_resp.text().await.unwrap_or_default();
             tracing::warn!("Failed to create bot token for {bot_user_id}: {status} {body}");
-            return Err(anyhow::anyhow!("Bot token creation failed {status}: {body}"));
+            return Err(anyhow::anyhow!(
+                "Bot token creation failed {status}: {body}"
+            ));
         };
 
         self.bot_user_cache
@@ -787,9 +794,13 @@ impl MattermostClient {
             .expect("bot_token_cache poisoned")
             .insert(bot_user_id.clone(), bot_token.clone());
 
-        tracing::info!("Created customer bot {slug} (user_id={bot_user_id}) for channel {channel_id}");
+        tracing::info!(
+            "Created customer bot {slug} (user_id={bot_user_id}) for channel {channel_id}"
+        );
 
-        let _ = self.add_user_to_channel(channel_id, &bot_user_id, &auth).await;
+        let _ = self
+            .add_user_to_channel(channel_id, &bot_user_id, &auth)
+            .await;
 
         Ok((bot_user_id, bot_token))
     }
@@ -802,23 +813,27 @@ impl MattermostClient {
         let ascii: String = display_name
             .to_lowercase()
             .chars()
-            .map(|c| {
-                match c {
-                    'á' | 'à' | 'ả' | 'ã' | 'ạ' | 'ă' | 'ắ' | 'ằ' | 'ẳ' | 'ẵ' | 'ặ' | 'â' | 'ấ' | 'ầ' | 'ẩ' | 'ẫ' | 'ậ' => 'a',
-                    'đ' => 'd',
-                    'é' | 'è' | 'ẻ' | 'ẽ' | 'ẹ' | 'ê' | 'ế' | 'ề' | 'ể' | 'ễ' | 'ệ' => 'e',
-                    'í' | 'ì' | 'ỉ' | 'ĩ' | 'ị' => 'i',
-                    'ó' | 'ò' | 'ỏ' | 'õ' | 'ọ' | 'ô' | 'ố' | 'ồ' | 'ổ' | 'ỗ' | 'ộ' | 'ơ' | 'ớ' | 'ờ' | 'ở' | 'ỡ' | 'ợ' => 'o',
-                    'ú' | 'ù' | 'ủ' | 'ũ' | 'ụ' | 'ư' | 'ứ' | 'ừ' | 'ử' | 'ữ' | 'ự' => 'u',
-                    'ý' | 'ỳ' | 'ỷ' | 'ỹ' | 'ỵ' => 'y',
-                    _ => c,
+            .map(|c| match c {
+                'á' | 'à' | 'ả' | 'ã' | 'ạ' | 'ă' | 'ắ' | 'ằ' | 'ẳ' | 'ẵ' | 'ặ' | 'â' | 'ấ'
+                | 'ầ' | 'ẩ' | 'ẫ' | 'ậ' => 'a',
+                'đ' => 'd',
+                'é' | 'è' | 'ẻ' | 'ẽ' | 'ẹ' | 'ê' | 'ế' | 'ề' | 'ể' | 'ễ' | 'ệ' => {
+                    'e'
                 }
+                'í' | 'ì' | 'ỉ' | 'ĩ' | 'ị' => 'i',
+                'ó' | 'ò' | 'ỏ' | 'õ' | 'ọ' | 'ô' | 'ố' | 'ồ' | 'ổ' | 'ỗ' | 'ộ' | 'ơ' | 'ớ'
+                | 'ờ' | 'ở' | 'ỡ' | 'ợ' => 'o',
+                'ú' | 'ù' | 'ủ' | 'ũ' | 'ụ' | 'ư' | 'ứ' | 'ừ' | 'ử' | 'ữ' | 'ự' => {
+                    'u'
+                }
+                'ý' | 'ỳ' | 'ỷ' | 'ỹ' | 'ỵ' => 'y',
+                _ => c,
             })
             .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == ' ' || *c == '-')
             .collect::<String>();
 
         let slug: String = ascii
-            .split(|c: char| c == ' ')
+            .split(' ')
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
             .join("-");
@@ -831,7 +846,7 @@ impl MattermostClient {
         let min_len = 3;
         let max_len = 22;
         if slug.len() < min_len {
-            return format!("cust-{}", slug);
+            return format!("cust-{slug}");
         }
         if slug.len() > max_len {
             return slug[..max_len].to_string();
@@ -841,10 +856,7 @@ impl MattermostClient {
 
     async fn resolve_bot_user_by_username(&self, username: &str) -> Result<String> {
         let auth = self.get_auth_header().await?;
-        let url = format!(
-            "{}/api/v4/users/username/{username}",
-            self.base_url
-        );
+        let url = format!("{}/api/v4/users/username/{username}", self.base_url);
         let resp = self
             .client
             .get(&url)
@@ -895,10 +907,7 @@ impl MattermostClient {
             }
         }
 
-        let team_member_url = format!(
-            "{}/api/v4/teams/{team_id}/members",
-            self.base_url
-        );
+        let team_member_url = format!("{}/api/v4/teams/{team_id}/members", self.base_url);
         let team_payload = serde_json::json!({
             "user_id": bot_user_id,
             "team_id": team_id,
@@ -919,7 +928,9 @@ impl MattermostClient {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
                 if !body.contains("already exists") && !body.contains("team_member") {
-                    tracing::warn!("Failed to add bot {bot_user_id} to team {team_id}: {status} {body}");
+                    tracing::warn!(
+                        "Failed to add bot {bot_user_id} to team {team_id}: {status} {body}"
+                    );
                 }
             }
             Err(e) => {
@@ -927,7 +938,8 @@ impl MattermostClient {
             }
         }
 
-        self.add_user_to_channel(channel_id, bot_user_id, auth).await?;
+        self.add_user_to_channel(channel_id, bot_user_id, auth)
+            .await?;
 
         Ok(())
     }
@@ -994,7 +1006,9 @@ impl MattermostClient {
             tracing::warn!("Bot {bot_user_id} got 403 posting to channel {channel_id}, re-adding to channel and retrying");
 
             let auth = self.get_auth_header().await?;
-            let _ = self.add_user_to_channel(channel_id, bot_user_id, &auth).await;
+            let _ = self
+                .add_user_to_channel(channel_id, bot_user_id, &auth)
+                .await;
 
             let retry_resp = self
                 .client
@@ -1006,14 +1020,19 @@ impl MattermostClient {
                 .context("Failed to retry post message as bot")?;
 
             if retry_resp.status().is_success() {
-                let post: PostResponse = retry_resp.json().await.context("Failed to parse post response")?;
+                let post: PostResponse = retry_resp
+                    .json()
+                    .await
+                    .context("Failed to parse post response")?;
                 tracing::info!("Bot {bot_user_id} retry post succeeded to channel {channel_id}");
                 return Ok(post.id);
             }
 
             let retry_status = retry_resp.status();
             let retry_body = retry_resp.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Bot post failed after retry {retry_status}: {retry_body}"));
+            return Err(anyhow::anyhow!(
+                "Bot post failed after retry {retry_status}: {retry_body}"
+            ));
         }
 
         Err(anyhow::anyhow!("Bot post failed {status}: {body}"))
@@ -1102,15 +1121,11 @@ impl MattermostClient {
     pub async fn ensure_bot_membership(&self, channel_id: &str) -> Result<()> {
         let auth = self.get_auth_header().await?;
         let bot_user_id = self.resolve_bot_user_id().await?;
-        self.add_user_to_channel(channel_id, &bot_user_id, &auth).await
+        self.add_user_to_channel(channel_id, &bot_user_id, &auth)
+            .await
     }
 
-    async fn add_user_to_channel(
-        &self,
-        channel_id: &str,
-        user_id: &str,
-        auth: &str,
-    ) -> Result<()> {
+    async fn add_user_to_channel(&self, channel_id: &str, user_id: &str, auth: &str) -> Result<()> {
         let url = format!("{}/api/v4/channels/{channel_id}/members", self.base_url);
         let payload = serde_json::json!({
             "user_id": user_id,

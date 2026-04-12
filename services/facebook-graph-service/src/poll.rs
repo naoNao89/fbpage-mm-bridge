@@ -117,7 +117,10 @@ async fn poll_conversation_new_messages(
         }
     }
 
-    let ordered_msgs: Vec<&crate::models::GraphMessage> = incoming_msgs.into_iter().chain(outgoing_msgs.into_iter()).collect();
+    let ordered_msgs: Vec<&crate::models::GraphMessage> = incoming_msgs
+        .into_iter()
+        .chain(outgoing_msgs.into_iter())
+        .collect();
 
     for msg in ordered_msgs {
         let is_from_page = msg.from.id == state.config.facebook_page_id;
@@ -173,10 +176,20 @@ async fn poll_conversation_new_messages(
                 let customer_name_str = customer.name.as_deref().unwrap_or(conversation_id);
 
                 if direction == "incoming" {
-                    match mm.get_or_create_customer_bot(&cust_id, customer_name_str, &channel_id).await {
+                    match mm
+                        .get_or_create_customer_bot(&cust_id, customer_name_str, &channel_id)
+                        .await
+                    {
                         Ok((bot_uid, bot_token)) => {
                             match mm
-                                .post_message_as_bot(&channel_id, text, msg_root, ts, &bot_uid, &bot_token)
+                                .post_message_as_bot(
+                                    &channel_id,
+                                    text,
+                                    msg_root,
+                                    ts,
+                                    &bot_uid,
+                                    &bot_token,
+                                )
                                 .await
                             {
                                 Ok(post_id) => {
@@ -188,10 +201,12 @@ async fn poll_conversation_new_messages(
                                 Err(e) if e.to_string().contains("Duplicate post skipped") => {}
                                 Err(e) if e.to_string().contains("Skipping empty message") => {}
                                 Err(e) => {
-                                    warn!("Bot post failed for {}, falling back: {e}", conversation_id);
-                                    if let Ok(post_id) = mm
-                                        .post_message(&channel_id, text, msg_root, ts)
-                                        .await
+                                    warn!(
+                                        "Bot post failed for {}, falling back: {e}",
+                                        conversation_id
+                                    );
+                                    if let Ok(post_id) =
+                                        mm.post_message(&channel_id, text, msg_root, ts).await
                                     {
                                         if root_id.is_none() {
                                             mm.set_root_id(conversation_id, &post_id);
@@ -203,9 +218,8 @@ async fn poll_conversation_new_messages(
                         }
                         Err(e) => {
                             warn!("Bot creation failed for {}, falling back: {e}", cust_id);
-                            if let Ok(post_id) = mm
-                                .post_message(&channel_id, text, msg_root, ts)
-                                .await
+                            if let Ok(post_id) =
+                                mm.post_message(&channel_id, text, msg_root, ts).await
                             {
                                 if root_id.is_none() {
                                     mm.set_root_id(conversation_id, &post_id);
@@ -215,10 +229,7 @@ async fn poll_conversation_new_messages(
                         }
                     }
                 } else {
-                    match mm
-                        .post_message(&channel_id, text, msg_root, ts)
-                        .await
-                    {
+                    match mm.post_message(&channel_id, text, msg_root, ts).await {
                         Ok(post_id) => {
                             if root_id.is_none() {
                                 mm.set_root_id(conversation_id, &post_id);
