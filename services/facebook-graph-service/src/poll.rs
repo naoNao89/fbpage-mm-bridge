@@ -82,15 +82,47 @@ async fn poll_conversation_new_messages(
 
     let mm = &state.mattermost_client;
     let team_id = mm.get_team_id().await?;
+
+    let first_customer_name = messages.iter().find_map(|msg| {
+        let is_from_page = msg.from.id == state.config.facebook_page_id;
+        if is_from_page {
+            msg.to.data.first().map(|u| u.name.clone())
+        } else {
+            Some(msg.from.name.clone())
+        }
+    });
+
+    let display_name = first_customer_name.as_deref().unwrap_or(conversation_id);
     let channel_id = mm
-        .get_or_create_channel(&team_id, conversation_id, conversation_id)
+        .get_or_create_channel(&team_id, conversation_id, display_name)
         .await?;
+
+    let _ = mm
+        .maybe_update_display_name(&channel_id, conversation_id, display_name)
+        .await;
 
     let root_id = mm.get_root_id(conversation_id).await?;
 
     let mut posted = 0;
 
+    let mut incoming_msgs: Vec<&crate::models::GraphMessage> = Vec::new();
+    let mut outgoing_msgs: Vec<&crate::models::GraphMessage> = Vec::new();
+
     for msg in &messages {
+        let is_from_page = msg.from.id == state.config.facebook_page_id;
+        if is_from_page {
+            outgoing_msgs.push(msg);
+        } else {
+            incoming_msgs.push(msg);
+        }
+    }
+
+    let ordered_msgs: Vec<&crate::models::GraphMessage> = incoming_msgs
+        .into_iter()
+        .chain(outgoing_msgs.into_iter())
+        .collect();
+
+    for msg in ordered_msgs {
         let is_from_page = msg.from.id == state.config.facebook_page_id;
         let direction = if is_from_page { "outgoing" } else { "incoming" };
 
@@ -135,27 +167,80 @@ async fn poll_conversation_new_messages(
 
         match state.message_client.store_message(message_payload).await {
             Ok(_) => {
+                if !mm.mark_posted(&msg.id) {
+                    continue;
+                }
                 let text = msg.message.as_deref().unwrap_or("");
                 let msg_root = root_id.as_deref();
-                match mm
-                    .post_message(
-                        &channel_id,
-                        text,
-                        msg_root,
-                        Some(msg.created_time.timestamp_millis()),
-                    )
-                    .await
-                {
-                    Ok(post_id) => {
-                        if root_id.is_none() {
-                            mm.set_root_id(conversation_id, &post_id);
+                let ts = Some(msg.created_time.timestamp_millis());
+                let customer_name_str = customer.name.as_deref().unwrap_or(conversation_id);
+
+                if direction == "incoming" {
+                    match mm
+                        .get_or_create_customer_bot(&cust_id, customer_name_str, &channel_id)
+                        .await
+                    {
+                        Ok((bot_uid, bot_token)) => {
+                            match mm
+                                .post_message_as_bot(
+                                    &channel_id,
+                                    text,
+                                    msg_root,
+                                    ts,
+                                    &bot_uid,
+                                    &bot_token,
+                                )
+                                .await
+                            {
+                                Ok(post_id) => {
+                                    if root_id.is_none() {
+                                        mm.set_root_id(conversation_id, &post_id);
+                                    }
+                                    posted += 1;
+                                }
+                                Err(e) if e.to_string().contains("Duplicate post skipped") => {}
+                                Err(e) if e.to_string().contains("Skipping empty message") => {}
+                                Err(e) => {
+                                    warn!(
+                                        "Bot post failed for {}, falling back: {e}",
+                                        conversation_id
+                                    );
+                                    if let Ok(post_id) =
+                                        mm.post_message(&channel_id, text, msg_root, ts).await
+                                    {
+                                        if root_id.is_none() {
+                                            mm.set_root_id(conversation_id, &post_id);
+                                        }
+                                        posted += 1;
+                                    }
+                                }
+                            }
                         }
-                        posted += 1;
+                        Err(e) => {
+                            warn!("Bot creation failed for {}, falling back: {e}", cust_id);
+                            if let Ok(post_id) =
+                                mm.post_message(&channel_id, text, msg_root, ts).await
+                            {
+                                if root_id.is_none() {
+                                    mm.set_root_id(conversation_id, &post_id);
+                                }
+                                posted += 1;
+                            }
+                        }
                     }
-                    Err(e) if e.to_string().contains("Duplicate post skipped") => {}
-                    Err(e) if e.to_string().contains("Skipping empty message") => {}
-                    Err(e) => {
-                        warn!("Mattermost post failed for {}: {}", conversation_id, e);
+                } else {
+                    match mm.post_message(&channel_id, text, msg_root, ts).await {
+                        Ok(post_id) => {
+                            if root_id.is_none() {
+                                mm.set_root_id(conversation_id, &post_id);
+                            }
+                            posted += 1;
+                        }
+                        Err(e) if e.to_string().contains("Duplicate post skipped") => {}
+                        Err(e) if e.to_string().contains("Skipping empty message") => {}
+                        Err(e) => {
+                            warn!("Mattermost post failed for {}: {}", conversation_id, e);
+                        }
                     }
                 }
             }
