@@ -38,6 +38,21 @@ pub struct Config {
     /// Polling interval in seconds for real-time message detection (0 = disabled)
     #[serde(default = "default_poll_interval")]
     pub poll_interval_secs: u64,
+    /// MinIO endpoint URL (e.g., "http://minio:9000")
+    #[serde(default = "default_minio_endpoint")]
+    pub minio_endpoint: String,
+    /// MinIO access key
+    #[serde(default = "default_minio_access_key")]
+    pub minio_access_key: String,
+    /// MinIO secret key
+    #[serde(default = "default_minio_secret_key")]
+    pub minio_secret_key: String,
+    /// MinIO bucket name for media storage
+    #[serde(default = "default_minio_bucket")]
+    pub minio_bucket: String,
+    /// MinIO presigned URL TTL in seconds
+    #[serde(default = "default_minio_presigned_ttl")]
+    pub minio_presigned_ttl_secs: u64,
 }
 
 fn default_rate_limit_warning_threshold() -> f32 {
@@ -50,6 +65,26 @@ fn default_rate_limit_critical_threshold() -> f32 {
 
 fn default_poll_interval() -> u64 {
     30
+}
+
+fn default_minio_endpoint() -> String {
+    "http://minio:9000".to_string()
+}
+
+fn default_minio_access_key() -> String {
+    "minioadmin".to_string()
+}
+
+fn default_minio_secret_key() -> String {
+    "minioadmin".to_string()
+}
+
+fn default_minio_bucket() -> String {
+    "fb-mm-media".to_string()
+}
+
+fn default_minio_presigned_ttl() -> u64 {
+    86400
 }
 
 impl Config {
@@ -88,6 +123,17 @@ impl Config {
                 .unwrap_or_else(|_| "30".to_string())
                 .parse()
                 .unwrap_or(30),
+            minio_endpoint: env::var("MINIO_ENDPOINT")
+                .unwrap_or_else(|_| "http://minio:9000".to_string()),
+            minio_access_key: env::var("MINIO_ACCESS_KEY")
+                .unwrap_or_else(|_| "minioadmin".to_string()),
+            minio_secret_key: env::var("MINIO_SECRET_KEY")
+                .unwrap_or_else(|_| "minioadmin".to_string()),
+            minio_bucket: env::var("MINIO_BUCKET").unwrap_or_else(|_| "fb-mm-media".to_string()),
+            minio_presigned_ttl_secs: env::var("MINIO_PRESIGNED_TTL_SECS")
+                .unwrap_or_else(|_| "86400".to_string())
+                .parse()
+                .unwrap_or(86400),
         })
     }
 }
@@ -97,11 +143,13 @@ impl fmt::Display for Config {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Config {{ bind_address: {}, facebook_page_id: {}, customer_service_url: {}, message_service_url: {} }}",
+            "Config {{ bind_address: {}, facebook_page_id: {}, customer_service_url: {}, message_service_url: {}, minio_endpoint: {}, minio_bucket: {} }}",
             self.bind_address,
             self.facebook_page_id,
             self.customer_service_url,
-            self.message_service_url
+            self.message_service_url,
+            self.minio_endpoint,
+            self.minio_bucket
         )
     }
 }

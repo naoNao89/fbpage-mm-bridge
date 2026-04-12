@@ -102,7 +102,26 @@ pub async fn webhook_handler(
                 .clone()
                 .or_else(|| msg.quick_reply.as_ref().map(|q| q.payload.clone()));
 
-            if let Some(text) = text {
+            let has_attachments = msg
+                .attachments
+                .as_ref()
+                .map(|a| !a.is_empty())
+                .unwrap_or(false);
+
+            let final_text = if let Some(text) = text {
+                if has_attachments {
+                    let att_md = format_webhook_attachments(msg.attachments.as_deref());
+                    Some(if text.trim().is_empty() { att_md } else { format!("{text}\n{att_md}") })
+                } else {
+                    Some(text)
+                }
+            } else if has_attachments {
+                Some(format_webhook_attachments(msg.attachments.as_deref()))
+            } else {
+                None
+            };
+
+            if let Some(text) = final_text {
                 if let Ok(customer) = state
                     .customer_client
                     .get_or_create_customer(customer_id, "facebook", None)
@@ -255,6 +274,31 @@ fn parse_webhook_entry(body: &str) -> Option<WebhookPayload> {
     serde_json::from_str(body).ok()
 }
 
+fn format_webhook_attachments(attachments: Option<&[WebhookAttachment]>) -> String {
+    let Some(attachments) = attachments else {
+        return String::new();
+    };
+    let mut parts = Vec::new();
+    for att in attachments {
+        let att_type = att.attachment_type.as_deref().unwrap_or("file");
+        let url = att
+            .payload
+            .as_ref()
+            .and_then(|p| p.url.as_deref());
+        match (att_type, url) {
+            ("image", Some(url)) => parts.push(format!("![image]({url})")),
+            ("image", None) => parts.push("📷 [image]".to_string()),
+            ("video", Some(url)) => parts.push(format!("[▶ video]({url})")),
+            ("video", None) => parts.push("📹 [video]".to_string()),
+            ("audio", Some(url)) => parts.push(format!("[🎵 audio]({url})")),
+            ("audio", None) => parts.push("🎵 [audio]".to_string()),
+            (_, Some(url)) => parts.push(format!("[📎 file]({url})")),
+            _ => parts.push("📎 [file]".to_string()),
+        }
+    }
+    parts.join("\n")
+}
+
 #[derive(Debug, Deserialize)]
 pub struct WebhookVerificationParams {
     #[serde(rename = "hub.mode")]
@@ -296,6 +340,20 @@ pub struct WebhookMessage {
     pub text: Option<String>,
     pub is_echo: Option<bool>,
     pub quick_reply: Option<WebhookQuickReply>,
+    #[serde(default)]
+    pub attachments: Option<Vec<WebhookAttachment>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookAttachment {
+    #[serde(rename = "type")]
+    pub attachment_type: Option<String>,
+    pub payload: Option<WebhookAttachmentPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookAttachmentPayload {
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

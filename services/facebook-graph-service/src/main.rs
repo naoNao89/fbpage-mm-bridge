@@ -1,6 +1,6 @@
 use facebook_graph_service::{config::Config, create_app, db, run_migrations, AppState};
 use std::net::SocketAddr;
-use tracing::info;
+use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -30,12 +30,32 @@ async fn main() -> anyhow::Result<()> {
     .with_db_pool(pool.clone())
     .await;
 
+    let minio = match facebook_graph_service::storage::MinioStorage::new(
+        &config.minio_endpoint,
+        &config.minio_access_key,
+        &config.minio_secret_key,
+        &config.minio_bucket,
+        std::time::Duration::from_secs(config.minio_presigned_ttl_secs),
+    )
+    .await
+    {
+        Ok(storage) => {
+            info!("MinIO storage initialized successfully");
+            Some(storage)
+        }
+        Err(e) => {
+            warn!("MinIO storage initialization failed (media storage disabled): {e}");
+            None
+        }
+    };
+
     let state = AppState {
         pool: pool.clone(),
         config: config.clone(),
         customer_client,
         message_client,
         mattermost_client,
+        minio,
     };
 
     let app = create_app(state.clone());

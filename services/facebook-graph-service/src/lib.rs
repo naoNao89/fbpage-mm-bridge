@@ -15,15 +15,16 @@ pub mod config;
 pub mod db;
 pub mod graph_api;
 pub mod handlers;
+pub mod media;
 pub mod models;
 pub mod poll;
 pub mod services;
+pub mod storage;
 
 use axum::{
     routing::{get, post},
     Router,
 };
-use sqlx::PgPool;
 
 use crate::config::Config;
 use crate::handlers::{
@@ -32,15 +33,17 @@ use crate::handlers::{
     webhook_verification,
 };
 use crate::services::{CustomerServiceClient, MattermostClient, MessageServiceClient};
+use crate::storage::MinioStorage;
 
 /// Application state shared across handlers
 #[derive(Clone)]
 pub struct AppState {
-    pub pool: PgPool,
+    pub pool: sqlx::PgPool,
     pub config: Config,
     pub customer_client: CustomerServiceClient,
     pub message_client: MessageServiceClient,
     pub mattermost_client: MattermostClient,
+    pub minio: Option<MinioStorage>,
 }
 
 /// Create the application router
@@ -64,7 +67,7 @@ pub fn create_app(state: AppState) -> Router {
 }
 
 /// Run database migrations
-pub async fn run_migrations(pool: &PgPool) -> anyhow::Result<()> {
+pub async fn run_migrations(pool: &sqlx::PgPool) -> anyhow::Result<()> {
     sqlx::migrate!("./migrations").run(pool).await?;
     Ok(())
 }

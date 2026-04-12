@@ -34,6 +34,16 @@ struct TokenResponse {
     token: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct FileUploadResponse {
+    file_infos: Vec<FileInfoResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileInfoResponse {
+    id: String,
+}
+
 /// Mattermost REST API client
 #[derive(Clone)]
 pub struct MattermostClient {
@@ -522,6 +532,201 @@ impl MattermostClient {
 
         let post: PostResponse = resp.json().await.context("Failed to parse post response")?;
         Ok(post.id)
+    }
+
+    /// Upload a file to Mattermost. Returns the file_id for attaching to a post.
+    pub async fn upload_file(
+        &self,
+        channel_id: &str,
+        file_data: bytes::Bytes,
+        filename: &str,
+        content_type: &str,
+    ) -> Result<String> {
+        let auth = self.get_auth_header().await?;
+        let url = format!("{}/api/v4/files", self.base_url);
+
+        let part = reqwest::multipart::Part::bytes(file_data.to_vec())
+            .file_name(filename.to_string())
+            .mime_str(content_type)
+            .unwrap_or_else(|_| reqwest::multipart::Part::bytes(file_data.to_vec()).file_name(filename.to_string()));
+
+        let form = reqwest::multipart::Form::new()
+            .text("channel_id", channel_id.to_string())
+            .part("files", part);
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .multipart(form)
+            .send()
+            .await
+            .context("Failed to upload file to Mattermost")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Mattermost file upload failed {status}: {body}"));
+        }
+
+        let upload_resp: FileUploadResponse = resp
+            .json()
+            .await
+            .context("Failed to parse file upload response")?;
+
+        upload_resp
+            .file_infos
+            .into_iter()
+            .next()
+            .map(|f| f.id)
+            .ok_or_else(|| anyhow::anyhow!("No file_info in upload response"))
+    }
+
+    /// Post a message with file attachments to a channel. Returns the new post_id.
+    pub async fn post_message_with_files(
+        &self,
+        channel_id: &str,
+        message: &str,
+        root_id: Option<&str>,
+        create_at: Option<i64>,
+        file_ids: &[String],
+    ) -> Result<String> {
+        if message.trim().is_empty() && file_ids.is_empty() {
+            return Err(anyhow::anyhow!("Skipping empty message post with no files"));
+        }
+
+        let auth = self.get_auth_header().await?;
+        let url = format!("{}/api/v4/posts", self.base_url);
+
+        let mut payload = serde_json::json!({
+            "channel_id": channel_id,
+            "message": message,
+        });
+        if let Some(rid) = root_id {
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("root_id".to_string(), serde_json::Value::String(rid.to_string()));
+        }
+        if let Some(ts) = create_at {
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("create_at".to_string(), serde_json::Value::Number(ts.into()));
+        }
+        if !file_ids.is_empty() {
+            payload.as_object_mut().unwrap().insert(
+                "file_ids".to_string(),
+                serde_json::Value::Array(
+                    file_ids.iter().map(|id| serde_json::Value::String(id.clone())).collect(),
+                ),
+            );
+        }
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to send post with files to Mattermost")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Mattermost post with files failed {status}: {body}"));
+        }
+
+        let post: PostResponse = resp.json().await.context("Failed to parse post response")?;
+        Ok(post.id)
+    }
+
+    pub async fn post_message_as_bot_with_files(
+        &self,
+        channel_id: &str,
+        message: &str,
+        root_id: Option<&str>,
+        create_at: Option<i64>,
+        bot_user_id: &str,
+        bot_token: &str,
+        file_ids: &[String],
+    ) -> Result<String> {
+        if message.trim().is_empty() && file_ids.is_empty() {
+            return Err(anyhow::anyhow!("Skipping empty bot message post with no files"));
+        }
+
+        let url = format!("{}/api/v4/posts", self.base_url);
+        let mut payload = serde_json::json!({
+            "channel_id": channel_id,
+            "message": message,
+        });
+        if let Some(rid) = root_id {
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("root_id".to_string(), serde_json::Value::String(rid.to_string()));
+        }
+        if let Some(ts) = create_at {
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("create_at".to_string(), serde_json::Value::Number(ts.into()));
+        }
+        if !file_ids.is_empty() {
+            payload.as_object_mut().unwrap().insert(
+                "file_ids".to_string(),
+                serde_json::Value::Array(
+                    file_ids.iter().map(|id| serde_json::Value::String(id.clone())).collect(),
+                ),
+            );
+        }
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {bot_token}"))
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to post message as bot with files")?;
+
+        if resp.status().is_success() {
+            let post: PostResponse = resp.json().await.context("Failed to parse post response")?;
+            return Ok(post.id);
+        }
+
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+
+        if status.as_u16() == 403 {
+            let auth = self.get_auth_header().await?;
+            let _ = self
+                .add_user_to_channel(channel_id, bot_user_id, &auth)
+                .await;
+
+            let retry_resp = self
+                .client
+                .post(&url)
+                .header("Authorization", format!("Bearer {bot_token}"))
+                .json(&payload)
+                .send()
+                .await
+                .context("Failed to retry post as bot with files")?;
+
+            if retry_resp.status().is_success() {
+                let post: PostResponse = retry_resp.json().await.context("Failed to parse post response")?;
+                return Ok(post.id);
+            }
+
+            let retry_status = retry_resp.status();
+            let retry_body = retry_resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "Bot post with files failed after retry {retry_status}: {retry_body}"
+            ));
+        }
+
+        Err(anyhow::anyhow!("Bot post with files failed {status}: {body}"))
     }
 
     async fn find_duplicate_post(
