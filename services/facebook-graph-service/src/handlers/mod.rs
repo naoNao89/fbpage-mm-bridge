@@ -147,7 +147,7 @@ async fn post_to_mattermost(
     root_id: Option<&str>,
     display_name: &str,
     direction: &str,
-    customer_platform_id: Option<&str>,
+    _customer_platform_id: Option<&str>,
 ) -> Result<(), anyhow::Error> {
     let mm = &state.mattermost_client;
     let team_id = match mm.get_team_id().await {
@@ -168,75 +168,33 @@ async fn post_to_mattermost(
             .maybe_update_display_name(&channel_id, conversation_id, display_name)
             .await;
 
+        let root = if let Some(r) = root_id {
+            Some(r.to_string())
+        } else {
+            mm.get_root_id(conversation_id).await.ok().flatten()
+        };
+
         if direction == "incoming" {
-            if let Some(psid) = customer_platform_id {
-                match mm.get_or_create_customer_bot(psid, display_name, &channel_id).await {
-                    Ok((bot_user_id, bot_token)) => {
-                        let root = if let Some(r) = root_id {
-                            Some(r.to_string())
-                        } else {
-                            mm.get_root_id(conversation_id).await.ok().flatten()
-                        };
-                        match mm
-                            .post_message_as_bot(
-                                &channel_id,
-                                text,
-                                root.as_deref(),
-                                None,
-                                &bot_user_id,
-                                &bot_token,
-                            )
-                            .await
-                        {
-                            Ok(post_id) => {
-                                if root.is_none() {
-                                    mm.set_root_id(conversation_id, &post_id);
-                                }
-                            }
-                            Err(e) => {
-                                warn!(
-                                    "Bot post failed for conversation {}, falling back to admin: {e}",
-                                    conversation_id
-                                );
-                                let root = if let Some(r) = root_id {
-                                    Some(r.to_string())
-                                } else {
-                                    mm.get_root_id(conversation_id).await.ok().flatten()
-                                };
-                                mm.post_message(&channel_id, text, root.as_deref(), None)
-                                    .await?;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to create customer bot for {}, falling back to admin: {e}",
-                            psid
-                        );
-                        let root = if let Some(r) = root_id {
-                            Some(r.to_string())
-                        } else {
-                            mm.get_root_id(conversation_id).await.ok().flatten()
-                        };
-                        mm.post_message(&channel_id, text, root.as_deref(), None)
-                            .await?;
+            let slug = crate::services::MattermostClient::generate_bot_username_from(display_name);
+            let icon_url = format!(
+                "{}/api/v4/users/username/{}/image",
+                state.config.mattermost_url.trim_end_matches('/'),
+                slug
+            );
+
+            match mm.post_message_with_override(&channel_id, text, root.as_deref(), None, Some(&slug), Some(&icon_url)).await {
+                Ok(post_id) => {
+                    if root.is_none() {
+                        mm.set_root_id(conversation_id, &post_id);
                     }
                 }
-            } else {
-                let root = if let Some(r) = root_id {
-                    Some(r.to_string())
-                } else {
-                    mm.get_root_id(conversation_id).await.ok().flatten()
-                };
-                mm.post_message(&channel_id, text, root.as_deref(), None)
-                    .await?;
+                Err(e) => {
+                    warn!("Override post failed for conversation {}, falling back: {e}", conversation_id);
+                    mm.post_message(&channel_id, text, root.as_deref(), None)
+                        .await?;
+                }
             }
         } else {
-            let root = if let Some(r) = root_id {
-                Some(r.to_string())
-            } else {
-                mm.get_root_id(conversation_id).await.ok().flatten()
-            };
             mm.post_message(&channel_id, text, root.as_deref(), None)
                 .await?;
         }
@@ -684,44 +642,20 @@ pub async fn process_conversation(
                         let ts = Some(msg.created_time.timestamp_millis());
 
                         if direction == "incoming" {
-                            match mm.get_or_create_customer_bot(&cust_id, display_name, &channel_id).await {
-                                Ok((bot_uid, bot_token)) => {
-                                    match mm
-                                        .post_message_as_bot(
-                                            &channel_id,
-                                            msg_text,
-                                            root_id_slice,
-                                            ts,
-                                            &bot_uid,
-                                            &bot_token,
-                                        )
-                                        .await
-                                    {
-                                        Ok(post_id) => {
-                                            if root_id_opt.is_none() {
-                                                mm.set_root_id(conversation_id, &post_id);
-                                            }
-                                        }
-                                        Err(e) => {
-                                            warn!("Bot post failed, falling back: {e}");
-                                            if let Ok(post_id) = mm
-                                                .post_message(
-                                                    &channel_id,
-                                                    msg_text,
-                                                    root_id_slice,
-                                                    ts,
-                                                )
-                                                .await
-                                            {
-                                                if root_id_opt.is_none() {
-                                                    mm.set_root_id(conversation_id, &post_id);
-                                                }
-                                            }
-                                        }
+                            let slug = crate::services::MattermostClient::generate_bot_username_from(display_name);
+                            let icon_url = format!(
+                                "{}/api/v4/users/username/{}/image",
+                                state.config.mattermost_url.trim_end_matches('/'),
+                                slug
+                            );
+                            match mm.post_message_with_override(&channel_id, msg_text, root_id_slice, ts, Some(&slug), Some(&icon_url)).await {
+                                Ok(post_id) => {
+                                    if root_id_opt.is_none() {
+                                        mm.set_root_id(conversation_id, &post_id);
                                     }
                                 }
                                 Err(e) => {
-                                    warn!("Bot creation failed, falling back: {e}");
+                                    warn!("Override post failed, falling back: {e}");
                                     if let Ok(post_id) = mm
                                         .post_message(&channel_id, msg_text, root_id_slice, ts)
                                         .await

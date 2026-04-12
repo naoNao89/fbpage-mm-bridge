@@ -173,36 +173,23 @@ async fn poll_conversation_new_messages(
                 let customer_name_str = customer.name.as_deref().unwrap_or(conversation_id);
 
                 if direction == "incoming" {
-                    match mm.get_or_create_customer_bot(&cust_id, customer_name_str, &channel_id).await {
-                        Ok((bot_uid, bot_token)) => {
-                            match mm
-                                .post_message_as_bot(&channel_id, text, msg_root, ts, &bot_uid, &bot_token)
-                                .await
-                            {
-                                Ok(post_id) => {
-                                    if root_id.is_none() {
-                                        mm.set_root_id(conversation_id, &post_id);
-                                    }
-                                    posted += 1;
-                                }
-                                Err(e) if e.to_string().contains("Duplicate post skipped") => {}
-                                Err(e) if e.to_string().contains("Skipping empty message") => {}
-                                Err(e) => {
-                                    warn!("Bot post failed for {}, falling back: {e}", conversation_id);
-                                    if let Ok(post_id) = mm
-                                        .post_message(&channel_id, text, msg_root, ts)
-                                        .await
-                                    {
-                                        if root_id.is_none() {
-                                            mm.set_root_id(conversation_id, &post_id);
-                                        }
-                                        posted += 1;
-                                    }
-                                }
+                    let slug = crate::services::MattermostClient::generate_bot_username_from(customer_name_str);
+                    let icon_url = format!(
+                        "{}/api/v4/users/username/{}/image",
+                        state.config.mattermost_url.trim_end_matches('/'),
+                        slug
+                    );
+                    match mm.post_message_with_override(&channel_id, text, msg_root, ts, Some(&slug), Some(&icon_url)).await {
+                        Ok(post_id) => {
+                            if root_id.is_none() {
+                                mm.set_root_id(conversation_id, &post_id);
                             }
+                            posted += 1;
                         }
+                        Err(e) if e.to_string().contains("Duplicate post skipped") => {}
+                        Err(e) if e.to_string().contains("Skipping empty message") => {}
                         Err(e) => {
-                            warn!("Bot creation failed for {}, falling back: {e}", cust_id);
+                            warn!("Override post failed for {}, falling back: {e}", conversation_id);
                             if let Ok(post_id) = mm
                                 .post_message(&channel_id, text, msg_root, ts)
                                 .await
