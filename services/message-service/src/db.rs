@@ -1,4 +1,4 @@
-use crate::models::{Message, MessageStats};
+use crate::models::{Message, MessageAttachment, MessageStats};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sqlx::{postgres::PgPoolOptions, PgPool};
@@ -242,4 +242,160 @@ mod tests {
         assert_eq!(config.bind_address, "0.0.0.0:3002");
         assert_eq!(config.customer_service_url, "http://localhost:3001");
     }
+}
+
+// Attachment CRUD operations
+
+#[allow(clippy::too_many_arguments)]
+pub async fn create_attachment(
+    pool: &PgPool,
+    message_id: Uuid,
+    attachment_type: &str,
+    external_id: Option<&str>,
+    name: Option<&str>,
+    mime_type: Option<&str>,
+    size_bytes: Option<i64>,
+    width: Option<i32>,
+    height: Option<i32>,
+    cdn_url: Option<&str>,
+    cdn_url_expires_at: Option<DateTime<Utc>>,
+    minio_key: Option<&str>,
+    minio_bucket: Option<&str>,
+    minio_etag: Option<&str>,
+    mm_file_id: Option<&str>,
+) -> Result<MessageAttachment> {
+    let row = sqlx::query_as::<_, MessageAttachment>(
+        r#"
+        INSERT INTO message_attachments (
+            message_id, attachment_type, external_id, name, mime_type,
+            size_bytes, width, height, cdn_url, cdn_url_expires_at,
+            minio_key, minio_bucket, minio_etag, mm_file_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        RETURNING *
+        "#,
+    )
+    .bind(message_id)
+    .bind(attachment_type)
+    .bind(external_id)
+    .bind(name)
+    .bind(mime_type)
+    .bind(size_bytes)
+    .bind(width)
+    .bind(height)
+    .bind(cdn_url)
+    .bind(cdn_url_expires_at)
+    .bind(minio_key)
+    .bind(minio_bucket)
+    .bind(minio_etag)
+    .bind(mm_file_id)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(row)
+}
+
+pub async fn get_attachments_by_message_id(
+    pool: &PgPool,
+    message_id: Uuid,
+) -> Result<Vec<MessageAttachment>> {
+    let rows = sqlx::query_as::<_, MessageAttachment>(
+        "SELECT * FROM message_attachments WHERE message_id = $1 ORDER BY created_at",
+    )
+    .bind(message_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
+}
+
+pub async fn get_attachment_by_id(pool: &PgPool, id: Uuid) -> Result<Option<MessageAttachment>> {
+    let row = sqlx::query_as::<_, MessageAttachment>(
+        "SELECT * FROM message_attachments WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row)
+}
+
+pub async fn get_attachment_by_external_id(
+    pool: &PgPool,
+    external_id: &str,
+) -> Result<Option<MessageAttachment>> {
+    let row = sqlx::query_as::<_, MessageAttachment>(
+        "SELECT * FROM message_attachments WHERE external_id = $1",
+    )
+    .bind(external_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row)
+}
+
+pub async fn update_attachment_minio(
+    pool: &PgPool,
+    id: Uuid,
+    minio_key: &str,
+    minio_bucket: &str,
+    minio_etag: Option<&str>,
+) -> Result<Option<MessageAttachment>> {
+    let row = sqlx::query_as::<_, MessageAttachment>(
+        r#"
+        UPDATE message_attachments
+        SET minio_key = $2, minio_bucket = $3, minio_etag = $4, updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+        "#,
+    )
+    .bind(id)
+    .bind(minio_key)
+    .bind(minio_bucket)
+    .bind(minio_etag)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row)
+}
+
+pub async fn update_attachment_mm_file_id(
+    pool: &PgPool,
+    id: Uuid,
+    mm_file_id: &str,
+) -> Result<Option<MessageAttachment>> {
+    let row = sqlx::query_as::<_, MessageAttachment>(
+        r#"
+        UPDATE message_attachments
+        SET mm_file_id = $2, updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+        "#,
+    )
+    .bind(id)
+    .bind(mm_file_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row)
+}
+
+pub async fn get_expired_cdn_attachments(
+    pool: &PgPool,
+    within_secs: i64,
+) -> Result<Vec<MessageAttachment>> {
+    let cutoff = Utc::now() + chrono::Duration::seconds(within_secs);
+    let rows = sqlx::query_as::<_, MessageAttachment>(
+        r#"
+        SELECT * FROM message_attachments
+        WHERE cdn_url_expires_at < $1
+          AND minio_key IS NULL
+        ORDER BY cdn_url_expires_at
+        LIMIT 500
+        "#,
+    )
+    .bind(cutoff)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
 }

@@ -101,3 +101,93 @@ pub struct MessageStats {
     pub unsynced: i64,
     pub sync_failed: i64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct MessageAttachment {
+    pub id: Uuid,
+    pub message_id: Uuid,
+    pub attachment_type: String,
+    pub external_id: Option<String>,
+    pub name: Option<String>,
+    pub mime_type: Option<String>,
+    pub size_bytes: Option<i64>,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub cdn_url: Option<String>,
+    pub cdn_url_expires_at: Option<DateTime<Utc>>,
+    pub minio_key: Option<String>,
+    pub minio_bucket: Option<String>,
+    pub minio_etag: Option<String>,
+    pub mm_file_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateAttachmentRequest {
+    pub message_id: Uuid,
+    pub attachment_type: String,
+    pub external_id: Option<String>,
+    pub name: Option<String>,
+    pub mime_type: Option<String>,
+    pub size_bytes: Option<i64>,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub cdn_url: Option<String>,
+    pub cdn_url_expires_at: Option<DateTime<Utc>>,
+    pub minio_key: Option<String>,
+    pub minio_bucket: Option<String>,
+    pub minio_etag: Option<String>,
+    pub mm_file_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentResponse {
+    pub id: Uuid,
+    pub message_id: Uuid,
+    pub attachment_type: String,
+    pub external_id: Option<String>,
+    pub name: Option<String>,
+    pub mime_type: Option<String>,
+    pub size_bytes: Option<i64>,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub cdn_url: Option<String>,
+    pub cdn_url_expires_at: Option<DateTime<Utc>>,
+    pub minio_key: Option<String>,
+    pub minio_bucket: Option<String>,
+    pub minio_etag: Option<String>,
+    pub mm_file_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<MessageAttachment> for AttachmentResponse {
+    fn from(a: MessageAttachment) -> Self {
+        Self {
+            id: a.id,
+            message_id: a.message_id,
+            attachment_type: a.attachment_type,
+            external_id: a.external_id,
+            name: a.name,
+            mime_type: a.mime_type,
+            size_bytes: a.size_bytes,
+            width: a.width,
+            height: a.height,
+            cdn_url: a.cdn_url,
+            cdn_url_expires_at: a.cdn_url_expires_at,
+            minio_key: a.minio_key,
+            minio_bucket: a.minio_bucket,
+            minio_etag: a.minio_etag,
+            mm_file_id: a.mm_file_id,
+            created_at: a.created_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateAttachmentRequest {
+    pub minio_key: Option<String>,
+    pub minio_bucket: Option<String>,
+    pub minio_etag: Option<String>,
+    pub mm_file_id: Option<String>,
+    pub cdn_url_expires_at: Option<DateTime<Utc>>,
+}

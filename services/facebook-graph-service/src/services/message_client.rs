@@ -36,6 +36,24 @@ pub struct MessageServiceClient {
     client: Client,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AttachmentPayload {
+    pub message_id: Uuid,
+    pub attachment_type: String,
+    pub external_id: Option<String>,
+    pub name: Option<String>,
+    pub mime_type: Option<String>,
+    pub size_bytes: Option<i64>,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub cdn_url: Option<String>,
+    pub cdn_url_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub minio_key: Option<String>,
+    pub minio_bucket: Option<String>,
+    pub minio_etag: Option<String>,
+    pub mm_file_id: Option<String>,
+}
+
 impl MessageServiceClient {
     /// Create a new Message Service client
     pub fn new(base_url: &str) -> Self {
@@ -107,5 +125,55 @@ impl MessageServiceClient {
             .context("Failed to parse Message Service response")?;
 
         Ok(message)
+    }
+
+    pub async fn store_attachment(&self, payload: AttachmentPayload) -> anyhow::Result<()> {
+        let url = format!("{}/api/attachments", self.base_url);
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to send attachment to Message Service")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            return Err(anyhow::anyhow!(
+                "Message Service attachment error {status}: {error_text}"
+            ));
+        }
+
+        Ok(())
+    }
+
+    pub async fn update_attachment_mm_file_id(
+        &self,
+        attachment_id: Uuid,
+        mm_file_id: &str,
+    ) -> anyhow::Result<()> {
+        let url = format!("{}/api/attachments/{attachment_id}/mm-file-id", self.base_url);
+
+        let payload = serde_json::json!({ "mm_file_id": mm_file_id });
+
+        let response = self
+            .client
+            .put(&url)
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to update attachment mm_file_id")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            return Err(anyhow::anyhow!(
+                "Message Service attachment update error {status}: {error_text}"
+            ));
+        }
+
+        Ok(())
     }
 }

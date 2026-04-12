@@ -166,7 +166,7 @@ async fn poll_conversation_new_messages(
         };
 
         match state.message_client.store_message(message_payload).await {
-            Ok(_) => {
+            Ok(msg_resp) => {
                 if !mm.mark_posted(&msg.id) {
                     continue;
                 }
@@ -175,7 +175,7 @@ async fn poll_conversation_new_messages(
                 let attachments = crate::media::extract_attachments_from_graph(msg);
 
                 let (msg_text, file_ids) =
-                    crate::media::process_attachments_for_post(&state, &mm, &channel_id, text, &attachments, &msg.id).await;
+                    crate::media::process_attachments_for_post(&state, &mm, &channel_id, text, &attachments, &msg.id, Some(msg_resp.id)).await;
 
                 let msg_root = root_id.as_deref();
                 let ts = Some(msg.created_time.timestamp_millis());

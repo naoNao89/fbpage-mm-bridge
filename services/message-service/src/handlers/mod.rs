@@ -8,8 +8,8 @@ use uuid::Uuid;
 
 use crate::db;
 use crate::models::{
-    CreateMessageRequest, ListMessagesQuery, MarkSyncFailedRequest, MarkSyncedRequest,
-    MessageResponse,
+    AttachmentResponse, CreateAttachmentRequest, CreateMessageRequest, ListMessagesQuery,
+    MarkSyncFailedRequest, MarkSyncedRequest, MessageResponse, UpdateAttachmentRequest,
 };
 use crate::AppState;
 
@@ -316,5 +316,143 @@ pub async fn lookup_customer_by_conversation(
             )
                 .into_response()
         }
+    }
+}
+
+pub async fn create_attachment(
+    State(state): State<AppState>,
+    Json(payload): Json<CreateAttachmentRequest>,
+) -> impl IntoResponse {
+    match db::create_attachment(
+        &state.pool,
+        payload.message_id,
+        &payload.attachment_type,
+        payload.external_id.as_deref(),
+        payload.name.as_deref(),
+        payload.mime_type.as_deref(),
+        payload.size_bytes,
+        payload.width,
+        payload.height,
+        payload.cdn_url.as_deref(),
+        payload.cdn_url_expires_at,
+        payload.minio_key.as_deref(),
+        payload.minio_bucket.as_deref(),
+        payload.minio_etag.as_deref(),
+        payload.mm_file_id.as_deref(),
+    )
+    .await
+    {
+        Ok(attachment) => {
+            let response: AttachmentResponse = attachment.into();
+            (StatusCode::CREATED, Json(response)).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to create attachment: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to create attachment",
+                    "details": e.to_string()
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+pub async fn get_attachments_by_message(
+    State(state): State<AppState>,
+    Path(message_id): Path<Uuid>,
+) -> impl IntoResponse {
+    match db::get_attachments_by_message_id(&state.pool, message_id).await {
+        Ok(attachments) => {
+            let responses: Vec<AttachmentResponse> =
+                attachments.into_iter().map(|a| a.into()).collect();
+            (StatusCode::OK, Json(responses)).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to get attachments for message {}: {}", message_id, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to get attachments",
+                    "details": e.to_string()
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+pub async fn get_attachment(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    match db::get_attachment_by_id(&state.pool, id).await {
+        Ok(Some(attachment)) => {
+            let response: AttachmentResponse = attachment.into();
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "Attachment not found",
+                "id": id.to_string()
+            })),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get attachment {}: {}", id, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to get attachment",
+                    "details": e.to_string()
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+pub async fn update_attachment_mm_file_id(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<UpdateAttachmentRequest>,
+) -> impl IntoResponse {
+    if let Some(ref mm_file_id) = payload.mm_file_id {
+        match db::update_attachment_mm_file_id(&state.pool, id, mm_file_id).await {
+            Ok(Some(attachment)) => {
+                let response: AttachmentResponse = attachment.into();
+                (StatusCode::OK, Json(response)).into_response()
+            }
+            Ok(None) => (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": "Attachment not found",
+                    "id": id.to_string()
+                })),
+            )
+                .into_response(),
+            Err(e) => {
+                tracing::error!("Failed to update attachment {}: {}", id, e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": "Failed to update attachment",
+                        "details": e.to_string()
+                    })),
+                )
+                    .into_response()
+            }
+        }
+    } else {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "mm_file_id is required"
+            })),
+        )
+            .into_response()
     }
 }

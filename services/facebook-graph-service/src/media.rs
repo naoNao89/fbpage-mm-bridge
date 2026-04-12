@@ -138,6 +138,7 @@ pub async fn process_attachments_for_post(
     text: &str,
     attachments: &[AttachmentInfo],
     message_id: &str,
+    message_db_id: Option<uuid::Uuid>,
 ) -> (String, Vec<String>) {
     if attachments.is_empty() {
         return (text.to_string(), Vec::new());
@@ -180,33 +181,59 @@ pub async fn process_attachments_for_post(
             .clone()
             .unwrap_or_else(|| "application/octet-stream".to_string());
 
-        match download_from_cdn(&cdn_client, &att.url).await {
-            Ok((data, detected_ct)) => {
-                let ct = if content_type == "application/octet-stream" {
-                    detected_ct
-                } else {
-                    content_type.clone()
-                };
+                match download_from_cdn(&cdn_client, &att.url).await {
+                    Ok((data, detected_ct)) => {
+                        let ct = if content_type == "application/octet-stream" {
+                            detected_ct
+                        } else {
+                            content_type.clone()
+                        };
 
-                if let Some(ref minio_storage) = state.minio {
-                    let key = crate::storage::build_media_key(
-                        &att.attachment_type,
-                        &state.config.facebook_page_id,
-                        message_id,
-                        filename,
-                    );
-                    if !minio_storage
-                        .object_exists(&key)
-                        .await
-                        .unwrap_or(false)
-                    {
-                        if let Err(e) = minio_storage.upload_media(&key, data.clone(), &ct).await {
-                            tracing::warn!("MinIO upload failed for {key}: {e}");
+                        if let Some(ref minio_storage) = state.minio {
+                            let key = crate::storage::build_media_key(
+                                &att.attachment_type,
+                                &state.config.facebook_page_id,
+                                message_id,
+                                filename,
+                            );
+                            if !minio_storage
+                                .object_exists(&key)
+                                .await
+                                .unwrap_or(false)
+                            {
+                                if let Ok(etag) = minio_storage.upload_media(&key, data.clone(), &ct).await {
+                                    let minio_bucket = state.config.minio_bucket.clone();
+                                    let cdn_expires = crate::storage::extract_cdn_expiry(&att.url);
+                                    let cdn_expires_at = cdn_expires
+                                        .map(|ts| chrono::DateTime::from_timestamp(ts, 0))
+                                        .flatten();
+
+                                    if let Some(db_id) = message_db_id {
+                                        let payload = crate::services::AttachmentPayload {
+                                            message_id: db_id,
+                                            attachment_type: att.attachment_type.clone(),
+                                            external_id: att.external_id.clone(),
+                                            name: att.name.clone(),
+                                            mime_type: Some(ct.clone()),
+                                            size_bytes: att.size,
+                                            width: att.width,
+                                            height: att.height,
+                                            cdn_url: Some(att.url.clone()),
+                                            cdn_url_expires_at: cdn_expires_at,
+                                            minio_key: Some(key.clone()),
+                                            minio_bucket: Some(minio_bucket),
+                                            minio_etag: Some(etag),
+                                            mm_file_id: None,
+                                        };
+                                        if let Err(e) = state.message_client.store_attachment(payload).await {
+                                            tracing::warn!("Failed to store attachment metadata: {e}");
+                                        }
+                                    }
+                                }
+                            }
                         }
-                    }
-                }
 
-                match mm.upload_file(channel_id, data, filename, &ct).await {
+                        match mm.upload_file(channel_id, data, filename, &ct).await {
                     Ok(file_id) => {
                         tracing::info!(
                             "Uploaded {} to Mattermost: file_id={file_id}",

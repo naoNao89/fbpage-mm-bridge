@@ -75,6 +75,14 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    {
+        let worker_state = state.clone();
+        tokio::spawn(async move {
+            facebook_graph_service::media_worker::run_media_worker(worker_state, 60).await;
+        });
+        info!("Media download worker started (interval: 60s)");
+    }
+
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
 

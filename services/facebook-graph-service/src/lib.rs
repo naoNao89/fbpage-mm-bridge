@@ -16,6 +16,7 @@ pub mod db;
 pub mod graph_api;
 pub mod handlers;
 pub mod media;
+pub mod media_worker;
 pub mod models;
 pub mod poll;
 pub mod services;
