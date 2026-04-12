@@ -182,7 +182,7 @@ async fn post_to_mattermost(
                 slug
             );
 
-            match mm.post_message_with_override(&channel_id, text, root.as_deref(), None, Some(&slug), Some(&icon_url)).await {
+            match mm.post_message_with_override(&channel_id, text, root.as_deref(), None, Some(display_name), Some(&icon_url)).await {
                 Ok(post_id) => {
                     if root.is_none() {
                         mm.set_root_id(conversation_id, &post_id);
@@ -648,7 +648,7 @@ pub async fn process_conversation(
                                 state.config.mattermost_url.trim_end_matches('/'),
                                 slug
                             );
-                            match mm.post_message_with_override(&channel_id, msg_text, root_id_slice, ts, Some(&slug), Some(&icon_url)).await {
+                            match mm.post_message_with_override(&channel_id, msg_text, root_id_slice, ts, Some(display_name), Some(&icon_url)).await {
                                 Ok(post_id) => {
                                     if root_id_opt.is_none() {
                                         mm.set_root_id(conversation_id, &post_id);
@@ -810,54 +810,63 @@ pub async fn reimport_conversation(
     let mut posted = 0u32;
     let mut root_id: Option<String> = None;
 
+    // Post all incoming (customer) messages first to ensure the thread root is from the customer
     for msg in &messages {
-        let is_from_page = msg.from.id == state.config.facebook_page_id;
+        if msg.from.id == state.config.facebook_page_id {
+            continue;
+        }
         let text = match &msg.message {
             Some(t) if !t.trim().is_empty() => t.as_str(),
             _ => continue,
         };
-
+        let customer_name = &msg.from.name;
+        let slug = crate::services::MattermostClient::generate_bot_username_from(customer_name);
+        let icon_url = format!(
+            "{}/api/v4/users/username/{}/image",
+            state.config.mattermost_url.trim_end_matches('/'),
+            slug
+        );
         let ts = Some(msg.created_time.timestamp_millis());
-
-        if !is_from_page {
-            let customer_name = &msg.from.name;
-            let slug = crate::services::MattermostClient::generate_bot_username_from(customer_name);
-            let icon_url = format!(
-                "{}/api/v4/users/username/{}/image",
-                state.config.mattermost_url.trim_end_matches('/'),
-                slug
-            );
-
-            let root = root_id.as_deref();
-            match mm.post_message_with_override(&channel_id, text, root, ts, Some(&slug), Some(&icon_url)).await {
-                Ok(post_id) => {
-                    if root_id.is_none() {
-                        mm.set_root_id(&conversation_id, &post_id);
-                        root_id = Some(post_id);
-                    }
-                    posted += 1;
-                }
-                Err(e) => {
-                    tracing::warn!("Reimport: override post failed for {}: {}", conversation_id, e);
-                    let root = root_id.as_deref();
-                    if let Ok(post_id) = mm.post_message(&channel_id, text, root, ts).await {
-                        if root_id.is_none() {
-                            mm.set_root_id(&conversation_id, &post_id);
-                            root_id = Some(post_id);
-                        }
-                        posted += 1;
-                    }
-                }
-            }
-        } else {
-            let root = root_id.as_deref();
-            if let Ok(post_id) = mm.post_message(&channel_id, text, root, ts).await {
+        let root = root_id.as_deref();
+        match mm.post_message_with_override(&channel_id, text, root, ts, Some(customer_name), Some(&icon_url)).await {
+            Ok(post_id) => {
                 if root_id.is_none() {
                     mm.set_root_id(&conversation_id, &post_id);
                     root_id = Some(post_id);
                 }
                 posted += 1;
             }
+            Err(e) => {
+                tracing::warn!("Reimport: override post failed for {}: {}", conversation_id, e);
+                let root = root_id.as_deref();
+                if let Ok(post_id) = mm.post_message(&channel_id, text, root, ts).await {
+                    if root_id.is_none() {
+                        mm.set_root_id(&conversation_id, &post_id);
+                        root_id = Some(post_id);
+                    }
+                    posted += 1;
+                }
+            }
+        }
+    }
+
+    // Now post outgoing (page) messages
+    for msg in &messages {
+        if msg.from.id != state.config.facebook_page_id {
+            continue;
+        }
+        let text = match &msg.message {
+            Some(t) if !t.trim().is_empty() => t.as_str(),
+            _ => continue,
+        };
+        let ts = Some(msg.created_time.timestamp_millis());
+        let root = root_id.as_deref();
+        if let Ok(post_id) = mm.post_message(&channel_id, text, root, ts).await {
+            if root_id.is_none() {
+                mm.set_root_id(&conversation_id, &post_id);
+                root_id = Some(post_id);
+            }
+            posted += 1;
         }
     }
 
@@ -1008,54 +1017,63 @@ async fn reimport_single_conversation(
     let mut posted = 0u32;
     let mut root_id: Option<String> = None;
 
+    // Post all incoming (customer) messages first to ensure the thread root is from the customer
     for msg in &messages {
-        let is_from_page = msg.from.id == state.config.facebook_page_id;
+        if msg.from.id == state.config.facebook_page_id {
+            continue;
+        }
         let text = match &msg.message {
             Some(t) if !t.trim().is_empty() => t.as_str(),
             _ => continue,
         };
-
+        let customer_name = &msg.from.name;
+        let slug = crate::services::MattermostClient::generate_bot_username_from(&customer_name);
+        let icon_url = format!(
+            "{}/api/v4/users/username/{}/image",
+            state.config.mattermost_url.trim_end_matches('/'),
+            slug
+        );
         let ts = Some(msg.created_time.timestamp_millis());
-
-        if !is_from_page {
-            let customer_name = &msg.from.name;
-            let slug = crate::services::MattermostClient::generate_bot_username_from(&customer_name);
-            let icon_url = format!(
-                "{}/api/v4/users/username/{}/image",
-                state.config.mattermost_url.trim_end_matches('/'),
-                slug
-            );
-
-            let root = root_id.as_deref();
-            match mm.post_message_with_override(channel_id, text, root, ts, Some(&slug), Some(&icon_url)).await {
-                Ok(post_id) => {
-                    if root_id.is_none() {
-                        mm.set_root_id(conversation_id, &post_id);
-                        root_id = Some(post_id);
-                    }
-                    posted += 1;
-                }
-                Err(e) => {
-                    tracing::warn!("Reimport: override post failed for {}: {}", conversation_id, e);
-                    let root = root_id.as_deref();
-                    if let Ok(post_id) = mm.post_message(channel_id, text, root, ts).await {
-                        if root_id.is_none() {
-                            mm.set_root_id(conversation_id, &post_id);
-                            root_id = Some(post_id);
-                        }
-                        posted += 1;
-                    }
-                }
-            }
-        } else {
-            let root = root_id.as_deref();
-            if let Ok(post_id) = mm.post_message(channel_id, text, root, ts).await {
+        let root = root_id.as_deref();
+        match mm.post_message_with_override(channel_id, text, root, ts, Some(customer_name), Some(&icon_url)).await {
+            Ok(post_id) => {
                 if root_id.is_none() {
                     mm.set_root_id(conversation_id, &post_id);
                     root_id = Some(post_id);
                 }
                 posted += 1;
             }
+            Err(e) => {
+                tracing::warn!("Reimport: override post failed for {}: {}", conversation_id, e);
+                let root = root_id.as_deref();
+                if let Ok(post_id) = mm.post_message(channel_id, text, root, ts).await {
+                    if root_id.is_none() {
+                        mm.set_root_id(conversation_id, &post_id);
+                        root_id = Some(post_id);
+                    }
+                    posted += 1;
+                }
+            }
+        }
+    }
+
+    // Now post outgoing (page) messages
+    for msg in &messages {
+        if msg.from.id != state.config.facebook_page_id {
+            continue;
+        }
+        let text = match &msg.message {
+            Some(t) if !t.trim().is_empty() => t.as_str(),
+            _ => continue,
+        };
+        let ts = Some(msg.created_time.timestamp_millis());
+        let root = root_id.as_deref();
+        if let Ok(post_id) = mm.post_message(channel_id, text, root, ts).await {
+            if root_id.is_none() {
+                mm.set_root_id(conversation_id, &post_id);
+                root_id = Some(post_id);
+            }
+            posted += 1;
         }
     }
 

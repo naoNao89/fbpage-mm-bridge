@@ -179,7 +179,7 @@ async fn poll_conversation_new_messages(
                         state.config.mattermost_url.trim_end_matches('/'),
                         slug
                     );
-                    match mm.post_message_with_override(&channel_id, text, msg_root, ts, Some(&slug), Some(&icon_url)).await {
+                    match mm.post_message_with_override(&channel_id, text, msg_root, ts, Some(customer_name_str), Some(&icon_url)).await {
                         Ok(post_id) => {
                             if root_id.is_none() {
                                 mm.set_root_id(conversation_id, &post_id);
