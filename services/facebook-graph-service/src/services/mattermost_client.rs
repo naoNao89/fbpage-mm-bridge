@@ -582,6 +582,54 @@ impl MattermostClient {
             .ok_or_else(|| anyhow::anyhow!("No file_info in upload response"))
     }
 
+    /// Upload a file to Mattermost using a bot token. Returns the file_id for attaching to a post.
+    pub async fn upload_file_as_bot(
+        &self,
+        channel_id: &str,
+        file_data: bytes::Bytes,
+        filename: &str,
+        content_type: &str,
+        bot_token: &str,
+    ) -> Result<String> {
+        let url = format!("{}/api/v4/files", self.base_url);
+
+        let part = reqwest::multipart::Part::bytes(file_data.to_vec())
+            .file_name(filename.to_string())
+            .mime_str(content_type)
+            .unwrap_or_else(|_| reqwest::multipart::Part::bytes(file_data.to_vec()).file_name(filename.to_string()));
+
+        let form = reqwest::multipart::Form::new()
+            .text("channel_id", channel_id.to_string())
+            .part("files", part);
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {bot_token}"))
+            .multipart(form)
+            .send()
+            .await
+            .context("Failed to upload file as bot to Mattermost")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Bot file upload failed {status}: {body}"));
+        }
+
+        let upload_resp: FileUploadResponse = resp
+            .json()
+            .await
+            .context("Failed to parse bot file upload response")?;
+
+        upload_resp
+            .file_infos
+            .into_iter()
+            .next()
+            .map(|f| f.id)
+            .ok_or_else(|| anyhow::anyhow!("No file_info in bot upload response"))
+    }
+
     /// Post a message with file attachments to a channel. Returns the new post_id.
     pub async fn post_message_with_files(
         &self,

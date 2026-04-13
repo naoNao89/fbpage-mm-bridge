@@ -445,8 +445,16 @@ struct Post {
     root_id: String,
     #[serde(default)]
     create_at: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_vec")]
     file_ids: Vec<String>,
+}
+
+fn deserialize_null_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<Vec<String>> = Option::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
 }
 
 #[derive(Debug, Clone)]
