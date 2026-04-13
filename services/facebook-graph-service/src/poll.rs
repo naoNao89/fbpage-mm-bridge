@@ -186,8 +186,8 @@ async fn poll_conversation_new_messages(
                         Ok((bot_uid, bot_token)) => {
                             let (msg_text, file_ids) = if !attachments.is_empty() {
                                 crate::media::process_attachments_for_post(
-                                    &state,
-                                    &mm,
+                                    state,
+                                    mm,
                                     &channel_id,
                                     text,
                                     &attachments,
@@ -273,8 +273,8 @@ async fn poll_conversation_new_messages(
                 } else {
                     let (msg_text, file_ids) = if !attachments.is_empty() {
                         crate::media::process_attachments_for_post(
-                            &state,
-                            &mm,
+                            state,
+                            mm,
                             &channel_id,
                             text,
                             &attachments,

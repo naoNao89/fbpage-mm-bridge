@@ -40,5 +40,5 @@ pub fn unique_platform_user_id() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    format!("{:?}:{}:{}", tid, ts, count)
+    format!("{tid:?}:{ts}:{count}")
 }

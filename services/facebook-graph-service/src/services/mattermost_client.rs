@@ -701,6 +701,7 @@ impl MattermostClient {
         Ok(post.id)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn post_message_as_bot_with_files(
         &self,
         channel_id: &str,

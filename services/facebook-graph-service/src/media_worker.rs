@@ -57,7 +57,7 @@ async fn process_stale_attachments(state: &AppState) -> anyhow::Result<()> {
                     attachment_type,
                     &state.config.facebook_page_id,
                     message_external_id.as_deref().unwrap_or("unknown"),
-                    &format!("attachment-{}", job_id),
+                    &format!("attachment-{job_id}"),
                 );
 
                 match minio.upload_media(&key, data, &detected_ct).await {

@@ -214,6 +214,7 @@ fn ensure_extension(filename: &str, content_type: &str) -> String {
     format!("{filename}{ext}")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn process_attachments_for_post(
     state: &crate::AppState,
     mm: &crate::services::MattermostClient,
@@ -256,7 +257,7 @@ pub async fn process_attachments_for_post(
                 att.attachment_type,
                 att.size
             );
-            fallback_parts.push(format_cdn_fallback(&att));
+            fallback_parts.push(format_cdn_fallback(att));
             continue;
         }
 
@@ -291,9 +292,8 @@ pub async fn process_attachments_for_post(
                         {
                             let minio_bucket = state.config.minio_bucket.clone();
                             let cdn_expires = crate::storage::extract_cdn_expiry(&att.url);
-                            let cdn_expires_at = cdn_expires
-                                .map(|ts| chrono::DateTime::from_timestamp(ts, 0))
-                                .flatten();
+                            let cdn_expires_at =
+                                cdn_expires.and_then(|ts| chrono::DateTime::from_timestamp(ts, 0));
 
                             if let Some(db_id) = message_db_id {
                                 let payload = crate::services::AttachmentPayload {
@@ -342,7 +342,7 @@ pub async fn process_attachments_for_post(
                             "Mattermost file upload failed for {}: {e}, using CDN fallback",
                             att.attachment_type
                         );
-                        fallback_parts.push(format_cdn_fallback(&att));
+                        fallback_parts.push(format_cdn_fallback(att));
                     }
                 }
             }
@@ -351,7 +351,7 @@ pub async fn process_attachments_for_post(
                     "CDN download failed for {}: {e}, using CDN fallback",
                     att.attachment_type
                 );
-                fallback_parts.push(format_cdn_fallback(&att));
+                fallback_parts.push(format_cdn_fallback(att));
             }
         }
     }
@@ -363,7 +363,7 @@ pub async fn process_attachments_for_post(
     } else if fallback_parts.is_empty() {
         text.to_string()
     } else {
-        format!("{}\n{}", text, fallback_parts.join("\n"))
+        format!("{text}\n{}", fallback_parts.join("\n"))
     };
 
     (combined_text, file_ids)

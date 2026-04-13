@@ -232,18 +232,6 @@ pub async fn get_message_by_external_id(
     Ok(message)
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::config::Config;
-
-    #[test]
-    fn test_config_default() {
-        let config = Config::default();
-        assert_eq!(config.bind_address, "0.0.0.0:3002");
-        assert_eq!(config.customer_service_url, "http://localhost:3001");
-    }
-}
-
 // Attachment CRUD operations
 
 #[allow(clippy::too_many_arguments)]
@@ -397,4 +385,16 @@ pub async fn get_expired_cdn_attachments(
     .await?;
 
     Ok(rows)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::Config;
+
+    #[test]
+    fn test_config_default() {
+        let config = Config::default();
+        assert_eq!(config.bind_address, "0.0.0.0:3002");
+        assert_eq!(config.customer_service_url, "http://localhost:3001");
+    }
 }

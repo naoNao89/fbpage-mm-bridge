@@ -201,7 +201,7 @@ async fn test_get_customer_by_id_not_found() {
         .oneshot(
             Request::builder()
                 .method(Method::GET)
-                .uri(format!("/api/customers/{}", non_existent_id))
+                .uri(format!("/api/customers/{non_existent_id}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -226,7 +226,7 @@ async fn test_get_customer_by_platform() {
         .oneshot(
             Request::builder()
                 .method(Method::GET)
-                .uri(format!("/api/customers/platform/facebook/{}", uid))
+                .uri(format!("/api/customers/platform/facebook/{uid}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -318,8 +318,7 @@ async fn test_list_customers() {
         .count();
     assert!(
         found_count >= 3,
-        "DB should have at least 3 customers, found {}. All: {:?}",
-        found_count,
+        "DB should have at least 3 customers, found {found_count}. All: {:?}",
         all_customers
             .iter()
             .map(|c| &c.platform_user_id)
@@ -350,8 +349,7 @@ async fn test_list_customers() {
         .count();
     assert!(
         api_found_count >= 3,
-        "Expected at least 3 of the created customers, found {}. Total: {}",
-        api_found_count,
+        "Expected at least 3 of the created customers, found {api_found_count}. Total: {}",
         customers.len()
     );
 
@@ -440,8 +438,7 @@ async fn test_customer_stats() {
         .count();
     assert!(
         found_count >= 3,
-        "Expected at least 3 created customers, found {}. Total: {}",
-        found_count,
+        "Expected at least 3 created customers, found {found_count}. Total: {}",
         customers.len()
     );
 
@@ -467,9 +464,8 @@ async fn test_customer_stats() {
     // Stats must be consistent with the created customers we verified exist
     assert!(
         stats["total"].as_i64().unwrap() >= found_count as i64,
-        "total {} should be >= found_count {}",
-        stats["total"],
-        found_count
+        "total {} should be >= found_count {found_count}",
+        stats["total"]
     );
     assert!(
         stats["by_platform"]["facebook"].as_i64().unwrap() >= 2,

@@ -118,7 +118,7 @@ pub fn build_media_key(
     message_id: &str,
     filename: &str,
 ) -> String {
-    format!("{}/{}/{}/{}", media_type, page_id, message_id, filename)
+    format!("{media_type}/{page_id}/{message_id}/{filename}")
 }
 
 pub fn extract_cdn_expiry(url: &str) -> Option<i64> {

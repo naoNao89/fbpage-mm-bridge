@@ -142,7 +142,7 @@ mod tests {
         for platform in platforms {
             let request = CreateMessageRequest {
                 customer_id: Uuid::new_v4(),
-                conversation_id: format!("conv_{}", platform),
+                conversation_id: format!("conv_{platform}"),
                 platform: platform.to_string(),
                 direction: "incoming".to_string(),
                 message_text: Some("test".to_string()),

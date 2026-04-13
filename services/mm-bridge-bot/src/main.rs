@@ -163,7 +163,10 @@ async fn poll_and_respond(
                             .context("Failed to send image to Facebook")?;
 
                         if resp.status().is_success() {
-                            info!("Sent image to FB user {psid} from MM file {file_id}");
+                            info!(
+                                "Sent image '{}' (id={}) to FB user {psid} from MM file {file_id}",
+                                file_info.name, file_info.id
+                            );
                             processed += 1;
                         } else {
                             let err = resp.text().await.unwrap_or_default();
@@ -466,7 +469,6 @@ struct Channel {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct FileInfo {
     id: String,
     name: String,

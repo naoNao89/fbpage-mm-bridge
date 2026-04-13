@@ -45,7 +45,7 @@ impl CustomerServiceClient {
 
     /// Check if a customer exists by ID
     pub async fn customer_exists(&self, customer_id: Uuid) -> Result<bool, CustomerClientError> {
-        let url = format!("{}/api/customers/{}", self.base_url, customer_id);
+        let url = format!("{}/api/customers/{customer_id}", self.base_url);
 
         let response = self.client.get(&url).send().await?;
 
@@ -63,7 +63,7 @@ impl CustomerServiceClient {
         &self,
         customer_id: Uuid,
     ) -> Result<Option<CustomerResponse>, CustomerClientError> {
-        let url = format!("{}/api/customers/{}", self.base_url, customer_id);
+        let url = format!("{}/api/customers/{customer_id}", self.base_url);
 
         let response = self.client.get(&url).send().await?;
 
