@@ -309,12 +309,11 @@ pub async fn get_attachments_by_message_id(
 }
 
 pub async fn get_attachment_by_id(pool: &PgPool, id: Uuid) -> Result<Option<MessageAttachment>> {
-    let row = sqlx::query_as::<_, MessageAttachment>(
-        "SELECT * FROM message_attachments WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
+    let row =
+        sqlx::query_as::<_, MessageAttachment>("SELECT * FROM message_attachments WHERE id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
 
     Ok(row)
 }

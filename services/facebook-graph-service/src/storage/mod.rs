@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use http::Method;
 use minio::s3::builders::ObjectContent;
+use minio::s3::client::ClientBuilder;
 use minio::s3::creds::StaticProvider;
 use minio::s3::http::BaseUrl;
 use minio::s3::response::GetPresignedObjectUrlResponse;
 use minio::s3::types::S3Api;
-use minio::s3::client::ClientBuilder;
 use std::time::Duration;
 
 #[derive(Clone)]
@@ -88,7 +88,12 @@ impl MinioStorage {
         Ok(resp.url)
     }
 
-    pub async fn media_markdown(&self, key: &str, media_type: &str, alt_text: &str) -> Result<String> {
+    pub async fn media_markdown(
+        &self,
+        key: &str,
+        media_type: &str,
+        alt_text: &str,
+    ) -> Result<String> {
         let url = self.presigned_get(key).await?;
         Ok(match media_type {
             "image" => format!("![{alt_text}]({url})"),
@@ -98,11 +103,7 @@ impl MinioStorage {
     }
 
     pub async fn object_exists(&self, key: &str) -> Result<bool> {
-        let resp = self
-            .client
-            .stat_object(&self.bucket, key)
-            .send()
-            .await;
+        let resp = self.client.stat_object(&self.bucket, key).send().await;
 
         match resp {
             Ok(_) => Ok(true),
@@ -111,7 +112,12 @@ impl MinioStorage {
     }
 }
 
-pub fn build_media_key(media_type: &str, page_id: &str, message_id: &str, filename: &str) -> String {
+pub fn build_media_key(
+    media_type: &str,
+    page_id: &str,
+    message_id: &str,
+    filename: &str,
+) -> String {
     format!("{}/{}/{}/{}", media_type, page_id, message_id, filename)
 }
 

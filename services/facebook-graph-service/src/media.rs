@@ -123,9 +123,21 @@ pub fn format_attachment_markdown(atts: &[AttachmentInfo]) -> String {
     let mut parts = Vec::new();
     for att in atts {
         match att.attachment_type.as_str() {
-            "image" => parts.push(format!("![{}]({})", att.name.as_deref().unwrap_or("image"), att.url)),
-            "video" => parts.push(format!("[▶ {}]({})", att.name.as_deref().unwrap_or("video"), att.url)),
-            _ => parts.push(format!("[{}]({})", att.name.as_deref().unwrap_or("file"), att.url)),
+            "image" => parts.push(format!(
+                "![{}]({})",
+                att.name.as_deref().unwrap_or("image"),
+                att.url
+            )),
+            "video" => parts.push(format!(
+                "[▶ {}]({})",
+                att.name.as_deref().unwrap_or("video"),
+                att.url
+            )),
+            _ => parts.push(format!(
+                "[{}]({})",
+                att.name.as_deref().unwrap_or("file"),
+                att.url
+            )),
         }
     }
     parts.join("\n")
@@ -133,10 +145,26 @@ pub fn format_attachment_markdown(atts: &[AttachmentInfo]) -> String {
 
 fn format_cdn_fallback(att: &AttachmentInfo) -> String {
     match att.attachment_type.as_str() {
-        "image" => format!("📷 [{}]({})", att.name.as_deref().unwrap_or("image"), att.url),
-        "video" => format!("📹 [{}]({})", att.name.as_deref().unwrap_or("video"), att.url),
-        "audio" => format!("🎵 [{}]({})", att.name.as_deref().unwrap_or("audio"), att.url),
-        _ => format!("📎 [{}]({})", att.name.as_deref().unwrap_or("file"), att.url),
+        "image" => format!(
+            "📷 [{}]({})",
+            att.name.as_deref().unwrap_or("image"),
+            att.url
+        ),
+        "video" => format!(
+            "📹 [{}]({})",
+            att.name.as_deref().unwrap_or("video"),
+            att.url
+        ),
+        "audio" => format!(
+            "🎵 [{}]({})",
+            att.name.as_deref().unwrap_or("audio"),
+            att.url
+        ),
+        _ => format!(
+            "📎 [{}]({})",
+            att.name.as_deref().unwrap_or("file"),
+            att.url
+        ),
     }
 }
 
@@ -158,7 +186,8 @@ fn detect_content_type(data: &[u8], declared: &str) -> String {
         if data.starts_with(b"%PDF") {
             return "application/pdf".to_string();
         }
-        if data.starts_with(b"ftyp") || (data.len() >= 8 && data[4..8] == [b'f', b't', b'y', b'p']) {
+        if data.starts_with(b"ftyp") || (data.len() >= 8 && data[4..8] == [b'f', b't', b'y', b'p'])
+        {
             return "video/mp4".to_string();
         }
     }
@@ -207,7 +236,11 @@ pub async fn process_attachments_for_post(
         Err(e) => {
             tracing::warn!("Failed to build CDN client: {e}");
             let att_markdown = format_attachment_markdown(attachments);
-            let combined_text = if text.trim().is_empty() { att_markdown } else { format!("{text}\n{att_markdown}") };
+            let combined_text = if text.trim().is_empty() {
+                att_markdown
+            } else {
+                format!("{text}\n{att_markdown}")
+            };
             return (combined_text, file_ids);
         }
     };
@@ -251,12 +284,11 @@ pub async fn process_attachments_for_post(
                         message_id,
                         &filename_with_ext,
                     );
-                    if !minio_storage
-                        .object_exists(&key)
-                        .await
-                        .unwrap_or(false)
-                    {
-                        if let Ok(etag) = minio_storage.upload_media(&key, data.clone(), &content_type).await {
+                    if !minio_storage.object_exists(&key).await.unwrap_or(false) {
+                        if let Ok(etag) = minio_storage
+                            .upload_media(&key, data.clone(), &content_type)
+                            .await
+                        {
                             let minio_bucket = state.config.minio_bucket.clone();
                             let cdn_expires = crate::storage::extract_cdn_expiry(&att.url);
                             let cdn_expires_at = cdn_expires
@@ -280,7 +312,8 @@ pub async fn process_attachments_for_post(
                                     minio_etag: Some(etag),
                                     mm_file_id: None,
                                 };
-                                if let Err(e) = state.message_client.store_attachment(payload).await {
+                                if let Err(e) = state.message_client.store_attachment(payload).await
+                                {
                                     tracing::warn!("Failed to store attachment metadata: {e}");
                                 }
                             }
@@ -289,9 +322,11 @@ pub async fn process_attachments_for_post(
                 }
 
                 let upload_result = if let Some(bt) = bot_token {
-                    mm.upload_file_as_bot(channel_id, data, &filename_with_ext, &content_type, bt).await
+                    mm.upload_file_as_bot(channel_id, data, &filename_with_ext, &content_type, bt)
+                        .await
                 } else {
-                    mm.upload_file(channel_id, data, &filename_with_ext, &content_type).await
+                    mm.upload_file(channel_id, data, &filename_with_ext, &content_type)
+                        .await
                 };
 
                 match upload_result {
@@ -312,7 +347,10 @@ pub async fn process_attachments_for_post(
                 }
             }
             Err(e) => {
-                tracing::warn!("CDN download failed for {}: {e}, using CDN fallback", att.attachment_type);
+                tracing::warn!(
+                    "CDN download failed for {}: {e}, using CDN fallback",
+                    att.attachment_type
+                );
                 fallback_parts.push(format_cdn_fallback(&att));
             }
         }

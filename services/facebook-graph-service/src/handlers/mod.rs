@@ -111,7 +111,11 @@ pub async fn webhook_handler(
             let final_text = if let Some(text) = text {
                 if has_attachments {
                     let att_md = format_webhook_attachments(msg.attachments.as_deref());
-                    Some(if text.trim().is_empty() { att_md } else { format!("{text}\n{att_md}") })
+                    Some(if text.trim().is_empty() {
+                        att_md
+                    } else {
+                        format!("{text}\n{att_md}")
+                    })
                 } else {
                     Some(text)
                 }
@@ -281,10 +285,7 @@ fn format_webhook_attachments(attachments: Option<&[WebhookAttachment]>) -> Stri
     let mut parts = Vec::new();
     for att in attachments {
         let att_type = att.attachment_type.as_deref().unwrap_or("file");
-        let url = att
-            .payload
-            .as_ref()
-            .and_then(|p| p.url.as_deref());
+        let url = att.payload.as_ref().and_then(|p| p.url.as_deref());
         match (att_type, url) {
             ("image", Some(url)) => parts.push(format!("![image]({url})")),
             ("image", None) => parts.push("📷 [image]".to_string()),
@@ -757,9 +758,16 @@ pub async fn process_conversation(
                                 Ok((bot_uid, bot_token)) => {
                                     let (final_text, file_ids) = if !attachments.is_empty() {
                                         crate::media::process_attachments_for_post(
-                                            state, mm, &channel_id, msg_text, &attachments,
-                                            &msg.id, Some(msg_resp.id), Some(&bot_token),
-                                        ).await
+                                            state,
+                                            mm,
+                                            &channel_id,
+                                            msg_text,
+                                            &attachments,
+                                            &msg.id,
+                                            Some(msg_resp.id),
+                                            Some(&bot_token),
+                                        )
+                                        .await
                                     } else {
                                         (msg_text.to_string(), Vec::new())
                                     };
@@ -825,15 +833,28 @@ pub async fn process_conversation(
                         } else {
                             let (final_text, file_ids) = if !attachments.is_empty() {
                                 crate::media::process_attachments_for_post(
-                                    state, mm, &channel_id, msg_text, &attachments,
-                                    &msg.id, Some(msg_resp.id), None,
-                                ).await
+                                    state,
+                                    mm,
+                                    &channel_id,
+                                    msg_text,
+                                    &attachments,
+                                    &msg.id,
+                                    Some(msg_resp.id),
+                                    None,
+                                )
+                                .await
                             } else {
                                 (msg_text.to_string(), Vec::new())
                             };
 
                             match mm
-                                .post_message_with_files(&channel_id, &final_text, root_id_slice, ts, &file_ids)
+                                .post_message_with_files(
+                                    &channel_id,
+                                    &final_text,
+                                    root_id_slice,
+                                    ts,
+                                    &file_ids,
+                                )
                                 .await
                             {
                                 Ok(post_id) => {
@@ -1240,18 +1261,42 @@ async fn reimport_single_conversation(
             Ok((bot_uid, bot_token)) => {
                 let (final_text, file_ids) = if !attachments.is_empty() {
                     crate::media::process_attachments_for_post(
-                        state, mm, channel_id, text, &attachments,
-                        &msg.id, None, Some(&bot_token),
-                    ).await
+                        state,
+                        mm,
+                        channel_id,
+                        text,
+                        &attachments,
+                        &msg.id,
+                        None,
+                        Some(&bot_token),
+                    )
+                    .await
                 } else {
                     (text.to_string(), Vec::new())
                 };
 
                 let root = root_id.as_deref();
                 let result = if file_ids.is_empty() {
-                    mm.post_message_as_bot(channel_id, &final_text, root, None, &bot_uid, &bot_token).await
+                    mm.post_message_as_bot(
+                        channel_id,
+                        &final_text,
+                        root,
+                        None,
+                        &bot_uid,
+                        &bot_token,
+                    )
+                    .await
                 } else {
-                    mm.post_message_as_bot_with_files(channel_id, &final_text, root, None, &bot_uid, &bot_token, &file_ids).await
+                    mm.post_message_as_bot_with_files(
+                        channel_id,
+                        &final_text,
+                        root,
+                        None,
+                        &bot_uid,
+                        &bot_token,
+                        &file_ids,
+                    )
+                    .await
                 };
                 match result {
                     Ok(post_id) => {
@@ -1264,7 +1309,9 @@ async fn reimport_single_conversation(
                     Err(e) => {
                         tracing::warn!("Reimport: bot post failed for {}: {}", conversation_id, e);
                         let root = root_id.as_deref();
-                        if let Ok(post_id) = mm.post_message(channel_id, &final_text, root, None).await {
+                        if let Ok(post_id) =
+                            mm.post_message(channel_id, &final_text, root, None).await
+                        {
                             if root_id.is_none() {
                                 mm.set_root_id(conversation_id, &post_id);
                                 root_id = Some(post_id);
@@ -1300,9 +1347,16 @@ async fn reimport_single_conversation(
         }
         let (final_text, file_ids) = if !attachments.is_empty() {
             crate::media::process_attachments_for_post(
-                state, mm, channel_id, text, &attachments,
-                &msg.id, None, None,
-            ).await
+                state,
+                mm,
+                channel_id,
+                text,
+                &attachments,
+                &msg.id,
+                None,
+                None,
+            )
+            .await
         } else {
             (text.to_string(), Vec::new())
         };
@@ -1311,7 +1365,8 @@ async fn reimport_single_conversation(
         let result = if file_ids.is_empty() {
             mm.post_message(channel_id, &final_text, root, None).await
         } else {
-            mm.post_message_with_files(channel_id, &final_text, root, None, &file_ids).await
+            mm.post_message_with_files(channel_id, &final_text, root, None, &file_ids)
+                .await
         };
         if let Ok(post_id) = result {
             if root_id.is_none() {

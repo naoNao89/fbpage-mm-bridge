@@ -371,7 +371,11 @@ pub async fn get_attachments_by_message(
             (StatusCode::OK, Json(responses)).into_response()
         }
         Err(e) => {
-            tracing::error!("Failed to get attachments for message {}: {}", message_id, e);
+            tracing::error!(
+                "Failed to get attachments for message {}: {}",
+                message_id,
+                e
+            );
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({

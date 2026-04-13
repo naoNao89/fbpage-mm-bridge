@@ -139,7 +139,7 @@ async fn poll_and_respond(
 
             if !post.file_ids.is_empty() {
                 for file_id in &post.file_ids {
-                    if let Ok(file_info) = get_file_info(&mm, file_id).await {
+                    if let Ok(file_info) = get_file_info(mm, file_id).await {
                         let image_url = match file_info.mime_type.as_deref() {
                             Some(mt) if mt.starts_with("image/") => file_info.url.clone(),
                             _ => continue,
@@ -163,9 +163,7 @@ async fn poll_and_respond(
                             .context("Failed to send image to Facebook")?;
 
                         if resp.status().is_success() {
-                            info!(
-                                "Sent image to FB user {psid} from MM file {file_id}"
-                            );
+                            info!("Sent image to FB user {psid} from MM file {file_id}");
                             processed += 1;
                         } else {
                             let err = resp.text().await.unwrap_or_default();
@@ -468,6 +466,7 @@ struct Channel {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct FileInfo {
     id: String,
     name: String,

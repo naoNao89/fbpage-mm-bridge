@@ -85,13 +85,11 @@ async fn process_stale_attachments(state: &AppState) -> anyhow::Result<()> {
 }
 
 async fn mark_job_status(pool: &sqlx::PgPool, id: uuid::Uuid, status: &str) -> anyhow::Result<()> {
-    sqlx::query(
-        "UPDATE media_download_jobs SET status = $2, updated_at = NOW() WHERE id = $1",
-    )
-    .bind(id)
-    .bind(status)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE media_download_jobs SET status = $2, updated_at = NOW() WHERE id = $1")
+        .bind(id)
+        .bind(status)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

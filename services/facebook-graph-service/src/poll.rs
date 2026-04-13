@@ -186,9 +186,16 @@ async fn poll_conversation_new_messages(
                         Ok((bot_uid, bot_token)) => {
                             let (msg_text, file_ids) = if !attachments.is_empty() {
                                 crate::media::process_attachments_for_post(
-                                    &state, &mm, &channel_id, text, &attachments,
-                                    &msg.id, Some(msg_resp.id), Some(&bot_token),
-                                ).await
+                                    &state,
+                                    &mm,
+                                    &channel_id,
+                                    text,
+                                    &attachments,
+                                    &msg.id,
+                                    Some(msg_resp.id),
+                                    Some(&bot_token),
+                                )
+                                .await
                             } else {
                                 (text.to_string(), Vec::new())
                             };
@@ -244,12 +251,17 @@ async fn poll_conversation_new_messages(
                             warn!("Bot creation failed for {}, falling back: {e}", cust_id);
                             let fallback_text = if !attachments.is_empty() {
                                 let att_md = crate::media::format_attachment_markdown(&attachments);
-                                if text.trim().is_empty() { att_md } else { format!("{text}\n{att_md}") }
+                                if text.trim().is_empty() {
+                                    att_md
+                                } else {
+                                    format!("{text}\n{att_md}")
+                                }
                             } else {
                                 text.to_string()
                             };
-                            if let Ok(post_id) =
-                                mm.post_message(&channel_id, &fallback_text, msg_root, ts).await
+                            if let Ok(post_id) = mm
+                                .post_message(&channel_id, &fallback_text, msg_root, ts)
+                                .await
                             {
                                 if root_id.is_none() {
                                     mm.set_root_id(conversation_id, &post_id);
@@ -261,9 +273,16 @@ async fn poll_conversation_new_messages(
                 } else {
                     let (msg_text, file_ids) = if !attachments.is_empty() {
                         crate::media::process_attachments_for_post(
-                            &state, &mm, &channel_id, text, &attachments,
-                            &msg.id, Some(msg_resp.id), None,
-                        ).await
+                            &state,
+                            &mm,
+                            &channel_id,
+                            text,
+                            &attachments,
+                            &msg.id,
+                            Some(msg_resp.id),
+                            None,
+                        )
+                        .await
                     } else {
                         (text.to_string(), Vec::new())
                     };
@@ -271,7 +290,8 @@ async fn poll_conversation_new_messages(
                     let result = if file_ids.is_empty() {
                         mm.post_message(&channel_id, &msg_text, msg_root, ts).await
                     } else {
-                        mm.post_message_with_files(&channel_id, &msg_text, msg_root, ts, &file_ids).await
+                        mm.post_message_with_files(&channel_id, &msg_text, msg_root, ts, &file_ids)
+                            .await
                     };
                     match result {
                         Ok(post_id) => {

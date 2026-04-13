@@ -548,7 +548,9 @@ impl MattermostClient {
         let part = reqwest::multipart::Part::bytes(file_data.to_vec())
             .file_name(filename.to_string())
             .mime_str(content_type)
-            .unwrap_or_else(|_| reqwest::multipart::Part::bytes(file_data.to_vec()).file_name(filename.to_string()));
+            .unwrap_or_else(|_| {
+                reqwest::multipart::Part::bytes(file_data.to_vec()).file_name(filename.to_string())
+            });
 
         let form = reqwest::multipart::Form::new()
             .text("channel_id", channel_id.to_string())
@@ -566,7 +568,9 @@ impl MattermostClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Mattermost file upload failed {status}: {body}"));
+            return Err(anyhow::anyhow!(
+                "Mattermost file upload failed {status}: {body}"
+            ));
         }
 
         let upload_resp: FileUploadResponse = resp
@@ -596,7 +600,9 @@ impl MattermostClient {
         let part = reqwest::multipart::Part::bytes(file_data.to_vec())
             .file_name(filename.to_string())
             .mime_str(content_type)
-            .unwrap_or_else(|_| reqwest::multipart::Part::bytes(file_data.to_vec()).file_name(filename.to_string()));
+            .unwrap_or_else(|_| {
+                reqwest::multipart::Part::bytes(file_data.to_vec()).file_name(filename.to_string())
+            });
 
         let form = reqwest::multipart::Form::new()
             .text("channel_id", channel_id.to_string())
@@ -651,22 +657,25 @@ impl MattermostClient {
             "message": message,
         });
         if let Some(rid) = root_id {
-            payload
-                .as_object_mut()
-                .unwrap()
-                .insert("root_id".to_string(), serde_json::Value::String(rid.to_string()));
+            payload.as_object_mut().unwrap().insert(
+                "root_id".to_string(),
+                serde_json::Value::String(rid.to_string()),
+            );
         }
         if let Some(ts) = create_at {
-            payload
-                .as_object_mut()
-                .unwrap()
-                .insert("create_at".to_string(), serde_json::Value::Number(ts.into()));
+            payload.as_object_mut().unwrap().insert(
+                "create_at".to_string(),
+                serde_json::Value::Number(ts.into()),
+            );
         }
         if !file_ids.is_empty() {
             payload.as_object_mut().unwrap().insert(
                 "file_ids".to_string(),
                 serde_json::Value::Array(
-                    file_ids.iter().map(|id| serde_json::Value::String(id.clone())).collect(),
+                    file_ids
+                        .iter()
+                        .map(|id| serde_json::Value::String(id.clone()))
+                        .collect(),
                 ),
             );
         }
@@ -683,7 +692,9 @@ impl MattermostClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Mattermost post with files failed {status}: {body}"));
+            return Err(anyhow::anyhow!(
+                "Mattermost post with files failed {status}: {body}"
+            ));
         }
 
         let post: PostResponse = resp.json().await.context("Failed to parse post response")?;
@@ -701,7 +712,9 @@ impl MattermostClient {
         file_ids: &[String],
     ) -> Result<String> {
         if message.trim().is_empty() && file_ids.is_empty() {
-            return Err(anyhow::anyhow!("Skipping empty bot message post with no files"));
+            return Err(anyhow::anyhow!(
+                "Skipping empty bot message post with no files"
+            ));
         }
 
         let url = format!("{}/api/v4/posts", self.base_url);
@@ -710,22 +723,25 @@ impl MattermostClient {
             "message": message,
         });
         if let Some(rid) = root_id {
-            payload
-                .as_object_mut()
-                .unwrap()
-                .insert("root_id".to_string(), serde_json::Value::String(rid.to_string()));
+            payload.as_object_mut().unwrap().insert(
+                "root_id".to_string(),
+                serde_json::Value::String(rid.to_string()),
+            );
         }
         if let Some(ts) = create_at {
-            payload
-                .as_object_mut()
-                .unwrap()
-                .insert("create_at".to_string(), serde_json::Value::Number(ts.into()));
+            payload.as_object_mut().unwrap().insert(
+                "create_at".to_string(),
+                serde_json::Value::Number(ts.into()),
+            );
         }
         if !file_ids.is_empty() {
             payload.as_object_mut().unwrap().insert(
                 "file_ids".to_string(),
                 serde_json::Value::Array(
-                    file_ids.iter().map(|id| serde_json::Value::String(id.clone())).collect(),
+                    file_ids
+                        .iter()
+                        .map(|id| serde_json::Value::String(id.clone()))
+                        .collect(),
                 ),
             );
         }
@@ -763,7 +779,10 @@ impl MattermostClient {
                 .context("Failed to retry post as bot with files")?;
 
             if retry_resp.status().is_success() {
-                let post: PostResponse = retry_resp.json().await.context("Failed to parse post response")?;
+                let post: PostResponse = retry_resp
+                    .json()
+                    .await
+                    .context("Failed to parse post response")?;
                 return Ok(post.id);
             }
 
@@ -774,7 +793,9 @@ impl MattermostClient {
             ));
         }
 
-        Err(anyhow::anyhow!("Bot post with files failed {status}: {body}"))
+        Err(anyhow::anyhow!(
+            "Bot post with files failed {status}: {body}"
+        ))
     }
 
     async fn find_duplicate_post(

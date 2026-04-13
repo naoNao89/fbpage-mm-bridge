@@ -154,7 +154,10 @@ impl MessageServiceClient {
         attachment_id: Uuid,
         mm_file_id: &str,
     ) -> anyhow::Result<()> {
-        let url = format!("{}/api/attachments/{attachment_id}/mm-file-id", self.base_url);
+        let url = format!(
+            "{}/api/attachments/{attachment_id}/mm-file-id",
+            self.base_url
+        );
 
         let payload = serde_json::json!({ "mm_file_id": mm_file_id });
 
