@@ -725,7 +725,7 @@ pub async fn process_conversation(
         };
 
         match state.message_client.store_message(message_payload).await {
-            Ok(_) => {
+            Ok(msg_resp) => {
                 if !state.mattermost_client.mark_posted(&msg.id) {
                     continue;
                 }
@@ -746,6 +746,7 @@ pub async fn process_conversation(
                         let root_id_opt = mm.get_root_id(conversation_id).await?;
                         let root_id_slice = root_id_opt.as_deref();
                         let msg_text = msg.message.as_deref().unwrap_or("");
+                        let attachments = crate::media::extract_attachments_from_graph(msg);
                         let ts = Some(msg.created_time.timestamp_millis());
 
                         if direction == "incoming" {
@@ -754,17 +755,38 @@ pub async fn process_conversation(
                                 .await
                             {
                                 Ok((bot_uid, bot_token)) => {
-                                    match mm
-                                        .post_message_as_bot(
+                                    let (final_text, file_ids) = if !attachments.is_empty() {
+                                        crate::media::process_attachments_for_post(
+                                            state, mm, &channel_id, msg_text, &attachments,
+                                            &msg.id, Some(msg_resp.id), Some(&bot_token),
+                                        ).await
+                                    } else {
+                                        (msg_text.to_string(), Vec::new())
+                                    };
+
+                                    let result = if file_ids.is_empty() {
+                                        mm.post_message_as_bot(
                                             &channel_id,
-                                            msg_text,
+                                            &final_text,
                                             root_id_slice,
                                             ts,
                                             &bot_uid,
                                             &bot_token,
                                         )
                                         .await
-                                    {
+                                    } else {
+                                        mm.post_message_as_bot_with_files(
+                                            &channel_id,
+                                            &final_text,
+                                            root_id_slice,
+                                            ts,
+                                            &bot_uid,
+                                            &bot_token,
+                                            &file_ids,
+                                        )
+                                        .await
+                                    };
+                                    match result {
                                         Ok(post_id) => {
                                             if root_id_opt.is_none() {
                                                 mm.set_root_id(conversation_id, &post_id);
@@ -775,7 +797,7 @@ pub async fn process_conversation(
                                             if let Ok(post_id) = mm
                                                 .post_message(
                                                     &channel_id,
-                                                    msg_text,
+                                                    &final_text,
                                                     root_id_slice,
                                                     ts,
                                                 )
@@ -801,8 +823,17 @@ pub async fn process_conversation(
                                 }
                             }
                         } else {
+                            let (final_text, file_ids) = if !attachments.is_empty() {
+                                crate::media::process_attachments_for_post(
+                                    state, mm, &channel_id, msg_text, &attachments,
+                                    &msg.id, Some(msg_resp.id), None,
+                                ).await
+                            } else {
+                                (msg_text.to_string(), Vec::new())
+                            };
+
                             match mm
-                                .post_message(&channel_id, msg_text, root_id_slice, ts)
+                                .post_message_with_files(&channel_id, &final_text, root_id_slice, ts, &file_ids)
                                 .await
                             {
                                 Ok(post_id) => {
@@ -1194,10 +1225,11 @@ async fn reimport_single_conversation(
         if msg.from.id == state.config.facebook_page_id {
             continue;
         }
-        let text = match &msg.message {
-            Some(t) if !t.trim().is_empty() => t.as_str(),
-            _ => continue,
-        };
+        let text = msg.message.as_deref().unwrap_or("");
+        let attachments = crate::media::extract_attachments_from_graph(msg);
+        if text.trim().is_empty() && attachments.is_empty() {
+            continue;
+        }
         let customer_name = &msg.from.name;
         let cust_id = &msg.from.id;
 
@@ -1206,11 +1238,22 @@ async fn reimport_single_conversation(
             .await
         {
             Ok((bot_uid, bot_token)) => {
+                let (final_text, file_ids) = if !attachments.is_empty() {
+                    crate::media::process_attachments_for_post(
+                        state, mm, channel_id, text, &attachments,
+                        &msg.id, None, Some(&bot_token),
+                    ).await
+                } else {
+                    (text.to_string(), Vec::new())
+                };
+
                 let root = root_id.as_deref();
-                match mm
-                    .post_message_as_bot(channel_id, text, root, None, &bot_uid, &bot_token)
-                    .await
-                {
+                let result = if file_ids.is_empty() {
+                    mm.post_message_as_bot(channel_id, &final_text, root, None, &bot_uid, &bot_token).await
+                } else {
+                    mm.post_message_as_bot_with_files(channel_id, &final_text, root, None, &bot_uid, &bot_token, &file_ids).await
+                };
+                match result {
                     Ok(post_id) => {
                         if root_id.is_none() {
                             mm.set_root_id(conversation_id, &post_id);
@@ -1221,7 +1264,7 @@ async fn reimport_single_conversation(
                     Err(e) => {
                         tracing::warn!("Reimport: bot post failed for {}: {}", conversation_id, e);
                         let root = root_id.as_deref();
-                        if let Ok(post_id) = mm.post_message(channel_id, text, root, None).await {
+                        if let Ok(post_id) = mm.post_message(channel_id, &final_text, root, None).await {
                             if root_id.is_none() {
                                 mm.set_root_id(conversation_id, &post_id);
                                 root_id = Some(post_id);
@@ -1250,12 +1293,27 @@ async fn reimport_single_conversation(
         if msg.from.id != state.config.facebook_page_id {
             continue;
         }
-        let text = match &msg.message {
-            Some(t) if !t.trim().is_empty() => t.as_str(),
-            _ => continue,
+        let text = msg.message.as_deref().unwrap_or("");
+        let attachments = crate::media::extract_attachments_from_graph(msg);
+        if text.trim().is_empty() && attachments.is_empty() {
+            continue;
+        }
+        let (final_text, file_ids) = if !attachments.is_empty() {
+            crate::media::process_attachments_for_post(
+                state, mm, channel_id, text, &attachments,
+                &msg.id, None, None,
+            ).await
+        } else {
+            (text.to_string(), Vec::new())
         };
+
         let root = root_id.as_deref();
-        if let Ok(post_id) = mm.post_message(channel_id, text, root, None).await {
+        let result = if file_ids.is_empty() {
+            mm.post_message(channel_id, &final_text, root, None).await
+        } else {
+            mm.post_message_with_files(channel_id, &final_text, root, None, &file_ids).await
+        };
+        if let Ok(post_id) = result {
             if root_id.is_none() {
                 mm.set_root_id(conversation_id, &post_id);
                 root_id = Some(post_id);
