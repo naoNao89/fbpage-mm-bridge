@@ -131,6 +131,15 @@ pub fn format_attachment_markdown(atts: &[AttachmentInfo]) -> String {
     parts.join("\n")
 }
 
+fn format_cdn_fallback(att: &AttachmentInfo) -> String {
+    match att.attachment_type.as_str() {
+        "image" => format!("📷 [{}]({})", att.name.as_deref().unwrap_or("image"), att.url),
+        "video" => format!("📹 [{}]({})", att.name.as_deref().unwrap_or("video"), att.url),
+        "audio" => format!("🎵 [{}]({})", att.name.as_deref().unwrap_or("audio"), att.url),
+        _ => format!("📎 [{}]({})", att.name.as_deref().unwrap_or("file"), att.url),
+    }
+}
+
 fn detect_content_type(data: &[u8], declared: &str) -> String {
     if data.len() >= 4 {
         let magic = [data[0], data[1], data[2], data[3]];
@@ -190,19 +199,15 @@ pub async fn process_attachments_for_post(
         return (text.to_string(), Vec::new());
     }
 
-    let att_markdown = format_attachment_markdown(attachments);
-    let combined_text = if text.trim().is_empty() {
-        att_markdown
-    } else {
-        format!("{text}\n{att_markdown}")
-    };
-
     let mut file_ids = Vec::new();
+    let mut fallback_parts = Vec::new();
 
     let cdn_client = match build_cdn_client() {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!("Failed to build CDN client: {e}");
+            let att_markdown = format_attachment_markdown(attachments);
+            let combined_text = if text.trim().is_empty() { att_markdown } else { format!("{text}\n{att_markdown}") };
             return (combined_text, file_ids);
         }
     };
@@ -218,6 +223,7 @@ pub async fn process_attachments_for_post(
                 att.attachment_type,
                 att.size
             );
+            fallback_parts.push(format_cdn_fallback(&att));
             continue;
         }
 
@@ -298,17 +304,29 @@ pub async fn process_attachments_for_post(
                     }
                     Err(e) => {
                         tracing::warn!(
-                            "Mattermost file upload failed for {}: {e}",
+                            "Mattermost file upload failed for {}: {e}, using CDN fallback",
                             att.attachment_type
                         );
+                        fallback_parts.push(format_cdn_fallback(&att));
                     }
                 }
             }
             Err(e) => {
-                tracing::warn!("CDN download failed for {}: {e}", att.attachment_type);
+                tracing::warn!("CDN download failed for {}: {e}, using CDN fallback", att.attachment_type);
+                fallback_parts.push(format_cdn_fallback(&att));
             }
         }
     }
+
+    let combined_text = if text.trim().is_empty() && fallback_parts.is_empty() {
+        String::new()
+    } else if text.trim().is_empty() {
+        fallback_parts.join("\n")
+    } else if fallback_parts.is_empty() {
+        text.to_string()
+    } else {
+        format!("{}\n{}", text, fallback_parts.join("\n"))
+    };
 
     (combined_text, file_ids)
 }
