@@ -131,6 +131,51 @@ pub fn format_attachment_markdown(atts: &[AttachmentInfo]) -> String {
     parts.join("\n")
 }
 
+fn detect_content_type(data: &[u8], declared: &str) -> String {
+    if data.len() >= 4 {
+        let magic = [data[0], data[1], data[2], data[3]];
+        if magic[..4] == [0x89, 0x50, 0x4E, 0x47] {
+            return "image/png".to_string();
+        }
+        if magic[..2] == [0xFF, 0xD8] {
+            return "image/jpeg".to_string();
+        }
+        if magic[..4] == [0x47, 0x49, 0x46, 0x38] {
+            return "image/gif".to_string();
+        }
+        if magic[..4] == [0x52, 0x49, 0x46, 0x46] {
+            return "image/webp".to_string();
+        }
+        if data.starts_with(b"%PDF") {
+            return "application/pdf".to_string();
+        }
+        if data.starts_with(b"ftyp") || (data.len() >= 8 && data[4..8] == [b'f', b't', b'y', b'p']) {
+            return "video/mp4".to_string();
+        }
+    }
+    declared.to_string()
+}
+
+fn ensure_extension(filename: &str, content_type: &str) -> String {
+    if filename.contains('.') {
+        return filename.to_string();
+    }
+    let ext = match content_type {
+        "image/png" => ".png",
+        "image/jpeg" => ".jpg",
+        "image/gif" => ".gif",
+        "image/webp" => ".webp",
+        "video/mp4" => ".mp4",
+        "video/quicktime" => ".mov",
+        "video/x-msvideo" => ".avi",
+        "audio/mpeg" => ".mp3",
+        "audio/ogg" => ".ogg",
+        "application/pdf" => ".pdf",
+        _ => "",
+    };
+    format!("{filename}{ext}")
+}
+
 pub async fn process_attachments_for_post(
     state: &crate::AppState,
     mm: &crate::services::MattermostClient,
@@ -177,32 +222,35 @@ pub async fn process_attachments_for_post(
         }
 
         let filename = att.name.as_deref().unwrap_or("attachment");
-        let content_type = att
+        let mut content_type = att
             .mime_type
             .clone()
             .unwrap_or_else(|| "application/octet-stream".to_string());
 
         match download_from_cdn(&cdn_client, &att.url).await {
             Ok((data, detected_ct)) => {
-                let ct = if content_type == "application/octet-stream" {
-                    detected_ct
-                } else {
-                    content_type.clone()
-                };
+                if content_type == "application/octet-stream" {
+                    content_type = detected_ct.clone();
+                }
+
+                let actual_content_type = detect_content_type(&data, &content_type);
+                content_type = actual_content_type.clone();
+
+                let filename_with_ext = ensure_extension(filename, &content_type);
 
                 if let Some(ref minio_storage) = state.minio {
                     let key = crate::storage::build_media_key(
                         &att.attachment_type,
                         &state.config.facebook_page_id,
                         message_id,
-                        filename,
+                        &filename_with_ext,
                     );
                     if !minio_storage
                         .object_exists(&key)
                         .await
                         .unwrap_or(false)
                     {
-                        if let Ok(etag) = minio_storage.upload_media(&key, data.clone(), &ct).await {
+                        if let Ok(etag) = minio_storage.upload_media(&key, data.clone(), &content_type).await {
                             let minio_bucket = state.config.minio_bucket.clone();
                             let cdn_expires = crate::storage::extract_cdn_expiry(&att.url);
                             let cdn_expires_at = cdn_expires
@@ -214,8 +262,8 @@ pub async fn process_attachments_for_post(
                                     message_id: db_id,
                                     attachment_type: att.attachment_type.clone(),
                                     external_id: att.external_id.clone(),
-                                    name: att.name.clone(),
-                                    mime_type: Some(ct.clone()),
+                                    name: Some(filename_with_ext.clone()),
+                                    mime_type: Some(content_type.clone()),
                                     size_bytes: att.size,
                                     width: att.width,
                                     height: att.height,
@@ -235,9 +283,9 @@ pub async fn process_attachments_for_post(
                 }
 
                 let upload_result = if let Some(bt) = bot_token {
-                    mm.upload_file_as_bot(channel_id, data, filename, &ct, bt).await
+                    mm.upload_file_as_bot(channel_id, data, &filename_with_ext, &content_type, bt).await
                 } else {
-                    mm.upload_file(channel_id, data, filename, &ct).await
+                    mm.upload_file(channel_id, data, &filename_with_ext, &content_type).await
                 };
 
                 match upload_result {
