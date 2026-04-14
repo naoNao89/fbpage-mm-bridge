@@ -143,6 +143,25 @@ async fn poll_conversation_new_messages(
             }
         };
 
+        // Pre-populate PSID→conversation_id cache so webhook handler can find it later
+        {
+            let cache = state.conversation_id_cache.read().await;
+            if !cache.contains_key(&cust_id) {
+                drop(cache);
+                let mut cache = state.conversation_id_cache.write().await;
+                if !cache.contains_key(&cust_id) {
+                    cache.insert(cust_id.clone(), conversation_id.to_string());
+                    let _ = crate::db::upsert_mm_cache(
+                        &state.pool,
+                        "conversation",
+                        &cust_id,
+                        conversation_id,
+                    )
+                    .await;
+                }
+            }
+        }
+
         let customer = match state
             .customer_client
             .get_or_create_customer(&cust_id, "facebook", customer_name.as_deref())

@@ -45,6 +45,10 @@ pub struct AppState {
     pub message_client: MessageServiceClient,
     pub mattermost_client: MattermostClient,
     pub minio: Option<MinioStorage>,
+    /// Cache: customer PSID → Facebook conversation ID (t_xxx format)
+    /// Used by webhook handler to resolve conversation_id without per-request Graph API calls.
+    pub conversation_id_cache:
+        std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
 }
 
 /// Create the application router

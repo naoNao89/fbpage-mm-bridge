@@ -49,6 +49,21 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    let conversation_id_cache = {
+        let mut cache = std::collections::HashMap::new();
+        match db::load_mm_cache(&pool, "conversation").await {
+            Ok(entries) => {
+                cache.extend(entries);
+                info!(
+                    "Loaded {} conversation_id cache entries from database",
+                    cache.len()
+                );
+            }
+            Err(e) => warn!("Failed to load conversation_id cache from database: {e}"),
+        }
+        std::sync::Arc::new(tokio::sync::RwLock::new(cache))
+    };
+
     let state = AppState {
         pool: pool.clone(),
         config: config.clone(),
@@ -56,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
         message_client,
         mattermost_client,
         minio,
+        conversation_id_cache,
     };
 
     let app = create_app(state.clone());

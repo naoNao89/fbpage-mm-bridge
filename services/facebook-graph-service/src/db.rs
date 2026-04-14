@@ -418,3 +418,24 @@ pub async fn upsert_mm_cache(
 
     Ok(())
 }
+
+/// Load a single cache entry by key_type and conversation_id.
+pub async fn load_single_mm_cache(
+    pool: &PgPool,
+    key_type: &str,
+    conversation_id: &str,
+) -> anyhow::Result<Option<String>> {
+    let result = sqlx::query_as::<_, (String,)>(
+        r#"
+        SELECT value FROM mattermost_cache
+        WHERE key_type = $1 AND conversation_id = $2
+        "#,
+    )
+    .bind(key_type)
+    .bind(conversation_id)
+    .fetch_optional(pool)
+    .await
+    .context("Failed to load single mattermost cache entry")?;
+
+    Ok(result.map(|(v,)| v))
+}

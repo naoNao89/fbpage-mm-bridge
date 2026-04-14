@@ -71,61 +71,103 @@ pub async fn webhook_handler(
 
     for entry in payload.entry {
         debug!("Processing entry: {}", entry.id);
-        for message in entry.messaging {
-            let sender_id = match &message.sender.id {
+        for messaging in entry.messaging {
+            let sender_id = match &messaging.sender.id {
                 Some(id) => id,
                 None => continue,
             };
-            let recipient_id = match &message.recipient.id {
+            let recipient_id = match &messaging.recipient.id {
                 Some(id) => id,
                 None => continue,
             };
-            let msg = match &message.message {
-                Some(m) => m,
-                None => continue,
-            };
 
-            let is_echo = msg.is_echo.unwrap_or(false);
-
-            // For echo messages (page's own replies), the customer is the recipient.
-            // For incoming messages (from user), the customer is the sender.
-            let (customer_id, conversation_id) = if is_echo {
-                (recipient_id, recipient_id)
-            } else {
-                (sender_id, recipient_id)
-            };
-
-            let direction = if is_echo { "outgoing" } else { "incoming" };
-
-            let text = msg
-                .text
-                .clone()
-                .or_else(|| msg.quick_reply.as_ref().map(|q| q.payload.clone()));
-
-            let has_attachments = msg
-                .attachments
+            let is_echo = messaging
+                .message
                 .as_ref()
-                .map(|a| !a.is_empty())
+                .and_then(|m| m.is_echo)
                 .unwrap_or(false);
 
-            let final_text = if let Some(text) = text {
-                if has_attachments {
-                    let att_md = format_webhook_attachments(msg.attachments.as_deref());
-                    Some(if text.trim().is_empty() {
-                        att_md
-                    } else {
-                        format!("{text}\n{att_md}")
-                    })
-                } else {
-                    Some(text)
-                }
-            } else if has_attachments {
-                Some(format_webhook_attachments(msg.attachments.as_deref()))
+            // Customer PSID and conversation_id:
+            // - For incoming (customer→page): customer_id = sender (PSID), customer is the conversation partner
+            // - For echo (page→customer): customer_id = recipient (PSID), customer is still the conversation partner
+            // - For postback (customer clicked button): customer_id = sender (PSID)
+            // conversation_id should use the customer PSID consistently so that
+            // webhook-driven and poller/import paths land in the same Mattermost channel.
+            let (customer_id, direction) = if is_echo {
+                (recipient_id, "outgoing")
             } else {
-                None
+                (sender_id, "incoming")
             };
 
-            if let Some(text) = final_text {
+            // Resolve conversation_id from customer PSID via Graph API with cache
+            let conversation_id = match resolve_conversation_id(&state, customer_id).await {
+                Ok(cid) => cid,
+                Err(e) => {
+                    warn!(
+                        "Failed to resolve conversation_id for PSID {}, using PSID as fallback: {e}",
+                        customer_id
+                    );
+                    customer_id.to_string()
+                }
+            };
+
+            // Handle three event types: message, postback, delivery receipt
+            let text: Option<String>;
+            let external_id: Option<String>;
+
+            if let Some(ref postback) = messaging.postback {
+                let title = postback.title.as_deref().unwrap_or(&postback.payload);
+                let payload_text = if let Some(ref ref_data) = postback.referral {
+                    format!(
+                        "[Button: {title}] (payload: {}, ref: {}, source: {})",
+                        postback.payload,
+                        ref_data.ref_.as_deref().unwrap_or(""),
+                        ref_data.source.as_deref().unwrap_or("")
+                    )
+                } else {
+                    format!("[Button: {title}] (payload: {})", postback.payload)
+                };
+                text = Some(payload_text);
+                external_id = Some(format!(
+                    "pb_{customer_id}_{}",
+                    chrono::Utc::now().timestamp_millis()
+                ));
+            } else if let Some(ref msg) = messaging.message {
+                let msg_text = msg
+                    .text
+                    .clone()
+                    .or_else(|| msg.quick_reply.as_ref().map(|q| q.payload.clone()));
+
+                let has_attachments = msg
+                    .attachments
+                    .as_ref()
+                    .map(|a| !a.is_empty())
+                    .unwrap_or(false);
+
+                let final_text = if let Some(t) = msg_text {
+                    if has_attachments {
+                        let att_md = format_webhook_attachments(msg.attachments.as_deref());
+                        Some(if t.trim().is_empty() {
+                            att_md
+                        } else {
+                            format!("{t}\n{att_md}")
+                        })
+                    } else {
+                        Some(t)
+                    }
+                } else if has_attachments {
+                    Some(format_webhook_attachments(msg.attachments.as_deref()))
+                } else {
+                    None
+                };
+                text = final_text;
+                external_id = msg.mid.clone();
+            } else {
+                // Delivery receipt or other non-content event — skip
+                continue;
+            }
+
+            if let Some(msg_text) = text {
                 if let Ok(customer) = state
                     .customer_client
                     .get_or_create_customer(customer_id, "facebook", None)
@@ -136,24 +178,24 @@ pub async fn webhook_handler(
                         customer_id: customer.id,
                         platform: "facebook".to_string(),
                         direction: direction.to_string(),
-                        message_text: Some(text.clone()),
-                        external_id: msg.mid.clone(),
+                        message_text: Some(msg_text.clone()),
+                        external_id: external_id.clone(),
                         created_at: chrono::Utc::now(),
                     };
                     let _ = state.message_client.store_message(payload).await;
 
-                    if let Some(ref mid) = msg.mid {
-                        if !state.mattermost_client.mark_posted(mid) {
+                    if let Some(ref eid) = external_id {
+                        if !state.mattermost_client.mark_posted(eid) {
                             continue;
                         }
                     }
 
-                    let display_name = customer.name.as_deref().unwrap_or(conversation_id);
+                    let display_name = customer.name.as_deref().unwrap_or(&conversation_id);
                     let _ = post_to_mattermost(
                         &state,
-                        conversation_id,
-                        &text,
-                        msg.mid.as_deref(),
+                        &conversation_id,
+                        &msg_text,
+                        external_id.as_deref(),
                         display_name,
                         direction,
                         Some(customer_id),
@@ -274,6 +316,94 @@ async fn post_to_mattermost(
     Ok(())
 }
 
+/// Resolve a customer PSID to the Facebook Graph API conversation ID (t_xxx format).
+///
+/// Uses a two-level cache strategy:
+/// 1. In-memory HashMap (fastest, within single process lifetime)
+/// 2. Database `mattermost_cache` with kind="conversation" (survives restarts)
+/// 3. On cache miss, calls `GET /{page-id}/conversations?user_id={PSID}&fields=id`
+///
+/// This ensures webhook messages land in the same Mattermost channel as
+/// poller/import messages which already use the t_xxx conversation ID.
+async fn resolve_conversation_id(state: &AppState, psid: &str) -> Result<String, anyhow::Error> {
+    // Check in-memory cache first
+    {
+        let cache = state.conversation_id_cache.read().await;
+        if let Some(cached) = cache.get(psid) {
+            return Ok(cached.clone());
+        }
+    }
+
+    // Check database cache
+    if let Ok(Some(cid)) = db::load_single_mm_cache(&state.pool, "conversation", psid).await {
+        let mut cache = state.conversation_id_cache.write().await;
+        cache.insert(psid.to_string(), cid.clone());
+        return Ok(cid);
+    }
+
+    // Cache miss: resolve via Graph API
+    let client = reqwest::Client::new();
+    let page_id = &state.config.facebook_page_id;
+    let access_token = &state.config.facebook_page_access_token;
+    let url = format!(
+        "https://graph.facebook.com/v24.0/{page_id}/conversations?user_id={psid}&fields=id&access_token={access_token}&limit=1",
+    );
+
+    let resp = client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .context("Failed to call Graph API for conversation resolution")?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "Graph API conversation resolution failed {status}: {body}"
+        ));
+    }
+
+    #[derive(Deserialize)]
+    struct ConversationResponse {
+        data: Vec<ConversationEntry>,
+    }
+    #[derive(Deserialize)]
+    struct ConversationEntry {
+        id: String,
+    }
+
+    let conv_resp: ConversationResponse = resp
+        .json()
+        .await
+        .context("Failed to parse conversation resolution response")?;
+
+    let conversation_id = conv_resp
+        .data
+        .first()
+        .map(|c| c.id.clone())
+        .ok_or_else(|| anyhow::anyhow!("No conversation found for PSID {psid}"))?;
+
+    state
+        .conversation_id_cache
+        .write()
+        .await
+        .insert(psid.to_string(), conversation_id.clone());
+    if let Err(e) = db::upsert_mm_cache(&state.pool, "conversation", psid, &conversation_id).await {
+        warn!(
+            "Failed to persist conversation cache for PSID {}: {e}",
+            psid
+        );
+    }
+
+    info!(
+        "Resolved PSID {} → conversation_id {} via Graph API",
+        psid, conversation_id
+    );
+
+    Ok(conversation_id)
+}
+
 fn parse_webhook_entry(body: &str) -> Option<WebhookPayload> {
     serde_json::from_str(body).ok()
 }
@@ -328,6 +458,34 @@ pub struct WebhookMessaging {
     pub sender: WebhookSender,
     pub recipient: WebhookSender,
     pub message: Option<WebhookMessage>,
+    /// Facebook postback events (persistent menu buttons, Get Started, etc.)
+    /// These fire when a user clicks a button rather than typing a message.
+    pub postback: Option<WebhookPostback>,
+}
+
+/// A postback payload from Facebook Messenger.
+/// Triggered when users click persistent menu items, Get Started button,
+/// or any button with a payload (not a URL button).
+#[derive(Debug, Deserialize)]
+pub struct WebhookPostback {
+    /// The display title of the button the user clicked (e.g. "Menu của Bump")
+    pub title: Option<String>,
+    /// The developer-defined payload string (e.g. "MENU", "ADDRESS")
+    pub payload: String,
+    /// Referral data that may accompany the postback
+    pub referral: Option<WebhookReferral>,
+}
+
+/// Referral data within a postback event
+#[derive(Debug, Deserialize)]
+pub struct WebhookReferral {
+    /// The ref parameter (e.g. "MENU")
+    pub ref_: Option<String>,
+    /// The source of the referral (e.g. "SHORTLINK", "MESSENGER_CODE")
+    pub source: Option<String>,
+    /// The type of referral
+    #[serde(rename = "type")]
+    pub referral_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -697,6 +855,25 @@ pub async fn process_conversation(
                 continue;
             }
         };
+
+        // Pre-populate PSID→conversation_id cache so webhook handler can find it later
+        {
+            let cache = state.conversation_id_cache.read().await;
+            if !cache.contains_key(&cust_id) {
+                drop(cache);
+                let mut cache = state.conversation_id_cache.write().await;
+                if !cache.contains_key(&cust_id) {
+                    cache.insert(cust_id.clone(), conversation_id.to_string());
+                    let _ = crate::db::upsert_mm_cache(
+                        &state.pool,
+                        "conversation",
+                        &cust_id,
+                        conversation_id,
+                    )
+                    .await;
+                }
+            }
+        }
 
         // Get or create customer via Customer Service
         let customer = match state
