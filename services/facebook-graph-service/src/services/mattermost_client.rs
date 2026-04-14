@@ -865,6 +865,14 @@ impl MattermostClient {
         Ok(guard.get(conversation_id).cloned())
     }
 
+    /// Clear the cached root post_id for a conversation (used before reimport).
+    pub fn clear_root_id(&self, conversation_id: &str) {
+        self.root_cache
+            .lock()
+            .expect("root_cache poisoned")
+            .remove(conversation_id);
+    }
+
     /// Fetch all posts in a channel created after the given Unix millisecond timestamp.
     /// Returns posts sorted by creation time (oldest first).
     pub async fn get_posts_since(

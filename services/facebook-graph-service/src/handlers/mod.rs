@@ -1091,6 +1091,8 @@ pub async fn reimport_conversation(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    mm.clear_root_id(&conversation_id);
+
     // Delete all existing posts in the channel
     let auth = mm
         .get_auth_header()
@@ -1209,6 +1211,7 @@ pub async fn reimport_conversation(
                             mm.set_root_id(&conversation_id, &post_id);
                             root_id = Some(post_id);
                         }
+                        mm.mark_posted(&msg.id);
                         posted += 1;
                     }
                     Err(e) => {
@@ -1219,6 +1222,7 @@ pub async fn reimport_conversation(
                                 mm.set_root_id(&conversation_id, &post_id);
                                 root_id = Some(post_id);
                             }
+                            mm.mark_posted(&msg.id);
                             posted += 1;
                         }
                     }
@@ -1232,6 +1236,7 @@ pub async fn reimport_conversation(
                         mm.set_root_id(&conversation_id, &post_id);
                         root_id = Some(post_id);
                     }
+                    mm.mark_posted(&msg.id);
                     posted += 1;
                 }
             }
@@ -1253,6 +1258,7 @@ pub async fn reimport_conversation(
                 mm.set_root_id(&conversation_id, &post_id);
                 root_id = Some(post_id);
             }
+            mm.mark_posted(&msg.id);
             posted += 1;
         }
     }
@@ -1333,6 +1339,8 @@ async fn reimport_single_conversation(
     channel_id: &str,
 ) -> Result<ReimportResult, anyhow::Error> {
     let mm = &state.mattermost_client;
+
+    mm.clear_root_id(conversation_id);
 
     let auth = mm.get_auth_header().await?;
     let client = reqwest::Client::new();
@@ -1481,6 +1489,7 @@ async fn reimport_single_conversation(
                             mm.set_root_id(conversation_id, &post_id);
                             root_id = Some(post_id);
                         }
+                        mm.mark_posted(&msg.id);
                         posted += 1;
                     }
                     Err(e) => {
@@ -1493,6 +1502,7 @@ async fn reimport_single_conversation(
                                 mm.set_root_id(conversation_id, &post_id);
                                 root_id = Some(post_id);
                             }
+                            mm.mark_posted(&msg.id);
                             posted += 1;
                         }
                     }
@@ -1506,6 +1516,7 @@ async fn reimport_single_conversation(
                         mm.set_root_id(conversation_id, &post_id);
                         root_id = Some(post_id);
                     }
+                    mm.mark_posted(&msg.id);
                     posted += 1;
                 }
             }
@@ -1550,6 +1561,7 @@ async fn reimport_single_conversation(
                 mm.set_root_id(conversation_id, &post_id);
                 root_id = Some(post_id);
             }
+            mm.mark_posted(&msg.id);
             posted += 1;
         }
     }
