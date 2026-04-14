@@ -27,9 +27,10 @@ use sqlx::PgPool;
 
 use crate::config::Config;
 use crate::handlers::{
-    create_message, get_message, get_messages_by_conversation, get_messages_by_customer,
-    get_unsynced_messages, health_check, lookup_customer_by_conversation, mark_message_sync_failed,
-    mark_message_synced,
+    create_attachment, create_message, get_attachment, get_attachments_by_message, get_message,
+    get_messages_by_conversation, get_messages_by_customer, get_unsynced_messages, health_check,
+    lookup_customer_by_conversation, mark_message_sync_failed, mark_message_synced,
+    update_attachment_mm_file_id,
 };
 use crate::services::customer_client::CustomerServiceClient;
 
@@ -66,6 +67,17 @@ pub fn create_app(state: AppState) -> Router {
         .route(
             "/api/messages/conversation/:conversation_id/customer",
             get(lookup_customer_by_conversation),
+        )
+        // Attachment operations
+        .route("/api/attachments", post(create_attachment))
+        .route(
+            "/api/attachments/message/:message_id",
+            get(get_attachments_by_message),
+        )
+        .route("/api/attachments/:id", get(get_attachment))
+        .route(
+            "/api/attachments/:id/mm-file-id",
+            put(update_attachment_mm_file_id),
         )
         .with_state(state)
 }

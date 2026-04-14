@@ -122,7 +122,7 @@ async fn poll_and_respond(
                 continue;
             }
 
-            if post.root_id.is_empty() || post.message.is_empty() {
+            if post.root_id.is_empty() && post.message.is_empty() && post.file_ids.is_empty() {
                 continue;
             }
 
@@ -137,27 +137,68 @@ async fn poll_and_respond(
             let fb_url =
                 format!("https://graph.facebook.com/v24.0/me/messages?access_token={fb_token}");
 
-            let payload = serde_json::json!({
-                "recipient": {"id": psid},
-                "message": {"text": post.message}
-            });
+            if !post.file_ids.is_empty() {
+                for file_id in &post.file_ids {
+                    if let Ok(file_info) = get_file_info(mm, file_id).await {
+                        let image_url = match file_info.mime_type.as_deref() {
+                            Some(mt) if mt.starts_with("image/") => file_info.url.clone(),
+                            _ => continue,
+                        };
 
-            let resp = http
-                .post(&fb_url)
-                .json(&payload)
-                .send()
-                .await
-                .context("Failed to send to Facebook")?;
+                        let payload = serde_json::json!({
+                            "recipient": {"id": psid},
+                            "message": {
+                                "attachment": {
+                                    "type": "image",
+                                    "payload": {"url": image_url}
+                                }
+                            }
+                        });
 
-            if resp.status().is_success() {
-                info!(
-                    "Replied to FB user {psid} from MM channel {} (post {})",
-                    channel.name, post.id
-                );
-                processed += 1;
-            } else {
-                let err = resp.text().await.unwrap_or_default();
-                error!("Facebook Send API error: {err}");
+                        let resp = http
+                            .post(&fb_url)
+                            .json(&payload)
+                            .send()
+                            .await
+                            .context("Failed to send image to Facebook")?;
+
+                        if resp.status().is_success() {
+                            info!(
+                                "Sent image '{}' (id={}) to FB user {psid} from MM file {file_id}",
+                                file_info.name, file_info.id
+                            );
+                            processed += 1;
+                        } else {
+                            let err = resp.text().await.unwrap_or_default();
+                            error!("Facebook image send API error: {err}");
+                        }
+                    }
+                }
+            }
+
+            if !post.message.is_empty() {
+                let payload = serde_json::json!({
+                    "recipient": {"id": psid},
+                    "message": {"text": post.message}
+                });
+
+                let resp = http
+                    .post(&fb_url)
+                    .json(&payload)
+                    .send()
+                    .await
+                    .context("Failed to send to Facebook")?;
+
+                if resp.status().is_success() {
+                    info!(
+                        "Replied to FB user {psid} from MM channel {} (post {})",
+                        channel.name, post.id
+                    );
+                    processed += 1;
+                } else {
+                    let err = resp.text().await.unwrap_or_default();
+                    error!("Facebook Send API error: {err}");
+                }
             }
         }
 
@@ -405,6 +446,16 @@ struct Post {
     root_id: String,
     #[serde(default)]
     create_at: i64,
+    #[serde(default, deserialize_with = "deserialize_null_vec")]
+    file_ids: Vec<String>,
+}
+
+fn deserialize_null_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<Vec<String>> = Option::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
 }
 
 #[derive(Debug, Clone)]
@@ -415,4 +466,34 @@ struct Channel {
     display_name: String,
     #[allow(dead_code)]
     team_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileInfo {
+    id: String,
+    name: String,
+    mime_type: Option<String>,
+    url: String,
+}
+
+async fn get_file_info(mm: &MmClient, file_id: &str) -> Result<FileInfo> {
+    let token = mm.token.as_ref().context("Not logged in")?;
+    let url = format!("{}/api/v4/files/{file_id}", mm.base_url);
+
+    let resp = mm
+        .http
+        .get(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .context("Failed to fetch file info")?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("File info fetch failed {status}: {body}");
+    }
+
+    let info: FileInfo = resp.json().await.context("Failed to parse file info")?;
+    Ok(info)
 }

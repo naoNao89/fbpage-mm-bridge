@@ -147,6 +147,8 @@ pub struct GraphAttachmentData {
     pub width: Option<i32>,
     #[serde(default)]
     pub height: Option<i32>,
+    #[serde(default)]
+    pub preview_url: Option<String>,
 }
 
 /// Messages response with paging

@@ -166,11 +166,14 @@ async fn poll_conversation_new_messages(
         };
 
         match state.message_client.store_message(message_payload).await {
-            Ok(_) => {
+            Ok(msg_resp) => {
                 if !mm.mark_posted(&msg.id) {
                     continue;
                 }
+
                 let text = msg.message.as_deref().unwrap_or("");
+                let attachments = crate::media::extract_attachments_from_graph(msg);
+
                 let msg_root = root_id.as_deref();
                 let ts = Some(msg.created_time.timestamp_millis());
                 let customer_name_str = customer.name.as_deref().unwrap_or(conversation_id);
@@ -181,17 +184,45 @@ async fn poll_conversation_new_messages(
                         .await
                     {
                         Ok((bot_uid, bot_token)) => {
-                            match mm
-                                .post_message_as_bot(
+                            let (msg_text, file_ids) = if !attachments.is_empty() {
+                                crate::media::process_attachments_for_post(
+                                    state,
+                                    mm,
                                     &channel_id,
                                     text,
+                                    &attachments,
+                                    &msg.id,
+                                    Some(msg_resp.id),
+                                    Some(&bot_token),
+                                )
+                                .await
+                            } else {
+                                (text.to_string(), Vec::new())
+                            };
+
+                            let result = if file_ids.is_empty() {
+                                mm.post_message_as_bot(
+                                    &channel_id,
+                                    &msg_text,
                                     msg_root,
                                     ts,
                                     &bot_uid,
                                     &bot_token,
                                 )
                                 .await
-                            {
+                            } else {
+                                mm.post_message_as_bot_with_files(
+                                    &channel_id,
+                                    &msg_text,
+                                    msg_root,
+                                    ts,
+                                    &bot_uid,
+                                    &bot_token,
+                                    &file_ids,
+                                )
+                                .await
+                            };
+                            match result {
                                 Ok(post_id) => {
                                     if root_id.is_none() {
                                         mm.set_root_id(conversation_id, &post_id);
@@ -206,7 +237,7 @@ async fn poll_conversation_new_messages(
                                         conversation_id
                                     );
                                     if let Ok(post_id) =
-                                        mm.post_message(&channel_id, text, msg_root, ts).await
+                                        mm.post_message(&channel_id, &msg_text, msg_root, ts).await
                                     {
                                         if root_id.is_none() {
                                             mm.set_root_id(conversation_id, &post_id);
@@ -218,8 +249,19 @@ async fn poll_conversation_new_messages(
                         }
                         Err(e) => {
                             warn!("Bot creation failed for {}, falling back: {e}", cust_id);
-                            if let Ok(post_id) =
-                                mm.post_message(&channel_id, text, msg_root, ts).await
+                            let fallback_text = if !attachments.is_empty() {
+                                let att_md = crate::media::format_attachment_markdown(&attachments);
+                                if text.trim().is_empty() {
+                                    att_md
+                                } else {
+                                    format!("{text}\n{att_md}")
+                                }
+                            } else {
+                                text.to_string()
+                            };
+                            if let Ok(post_id) = mm
+                                .post_message(&channel_id, &fallback_text, msg_root, ts)
+                                .await
                             {
                                 if root_id.is_none() {
                                     mm.set_root_id(conversation_id, &post_id);
@@ -229,7 +271,29 @@ async fn poll_conversation_new_messages(
                         }
                     }
                 } else {
-                    match mm.post_message(&channel_id, text, msg_root, ts).await {
+                    let (msg_text, file_ids) = if !attachments.is_empty() {
+                        crate::media::process_attachments_for_post(
+                            state,
+                            mm,
+                            &channel_id,
+                            text,
+                            &attachments,
+                            &msg.id,
+                            Some(msg_resp.id),
+                            None,
+                        )
+                        .await
+                    } else {
+                        (text.to_string(), Vec::new())
+                    };
+
+                    let result = if file_ids.is_empty() {
+                        mm.post_message(&channel_id, &msg_text, msg_root, ts).await
+                    } else {
+                        mm.post_message_with_files(&channel_id, &msg_text, msg_root, ts, &file_ids)
+                            .await
+                    };
+                    match result {
                         Ok(post_id) => {
                             if root_id.is_none() {
                                 mm.set_root_id(conversation_id, &post_id);
