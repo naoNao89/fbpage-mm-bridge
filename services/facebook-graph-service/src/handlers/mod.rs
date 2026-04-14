@@ -1098,6 +1098,7 @@ pub async fn reimport_conversation(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     mm.clear_root_id(&conversation_id);
+    mm.clear_root_id_db(&state.pool, &conversation_id);
 
     // Delete all existing posts in the channel
     let auth = mm
@@ -1356,6 +1357,7 @@ async fn reimport_single_conversation(
     let mm = &state.mattermost_client;
 
     mm.clear_root_id(conversation_id);
+    mm.clear_root_id_db(&state.pool, conversation_id);
 
     let auth = mm.get_auth_header().await?;
     let client = reqwest::Client::new();
