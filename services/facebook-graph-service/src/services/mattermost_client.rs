@@ -919,16 +919,19 @@ impl MattermostClient {
     }
 
     pub fn clear_root_id_db(&self, pool: &sqlx::PgPool, conversation_id: &str) {
-        if let Err(e) = tokio::runtime::Handle::current().block_on(async {
-            sqlx::query(
+        let cid = conversation_id.to_string();
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            if let Err(e) = sqlx::query(
                 "DELETE FROM mattermost_cache WHERE key_type = 'root' AND conversation_id = $1",
             )
-            .bind(conversation_id)
-            .execute(pool)
+            .bind(&cid)
+            .execute(&pool)
             .await
-        }) {
-            tracing::warn!("Failed to clear root_id from DB for {conversation_id}: {e}");
-        }
+            {
+                tracing::warn!("Failed to clear root_id from DB for {cid}: {e}");
+            }
+        });
     }
 
     /// Fetch all posts in a channel created after the given Unix millisecond timestamp.
