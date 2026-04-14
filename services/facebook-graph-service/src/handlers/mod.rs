@@ -250,13 +250,15 @@ async fn post_to_mattermost(
                             mm.get_root_id(conversation_id).await.ok().flatten()
                         };
                         match mm
-                            .post_message_as_bot(
+                            .post_message_as_bot_with_override(
                                 &channel_id,
                                 text,
                                 root.as_deref(),
                                 None,
                                 &bot_user_id,
                                 &bot_token,
+                                Some(display_name),
+                                None,
                             )
                             .await
                         {
@@ -950,17 +952,19 @@ pub async fn process_conversation(
                                     };
 
                                     let result = if file_ids.is_empty() {
-                                        mm.post_message_as_bot(
+                                        mm.post_message_as_bot_with_override(
                                             &channel_id,
                                             &final_text,
                                             root_id_slice,
                                             ts,
                                             &bot_uid,
                                             &bot_token,
+                                            Some(display_name),
+                                            None,
                                         )
                                         .await
                                     } else {
-                                        mm.post_message_as_bot_with_files(
+                                        mm.post_message_as_bot_with_files_and_override(
                                             &channel_id,
                                             &final_text,
                                             root_id_slice,
@@ -968,6 +972,8 @@ pub async fn process_conversation(
                                             &bot_uid,
                                             &bot_token,
                                             &file_ids,
+                                            Some(display_name),
+                                            None,
                                         )
                                         .await
                                     };
@@ -1203,7 +1209,16 @@ pub async fn reimport_conversation(
             Ok((bot_uid, bot_token)) => {
                 let root = root_id.as_deref();
                 match mm
-                    .post_message_as_bot(&channel_id, text, root, None, &bot_uid, &bot_token)
+                    .post_message_as_bot_with_override(
+                        &channel_id,
+                        text,
+                        root,
+                        None,
+                        &bot_uid,
+                        &bot_token,
+                        Some(customer_name),
+                        None,
+                    )
                     .await
                 {
                     Ok(post_id) => {
@@ -1462,17 +1477,19 @@ async fn reimport_single_conversation(
 
                 let root = root_id.as_deref();
                 let result = if file_ids.is_empty() {
-                    mm.post_message_as_bot(
+                    mm.post_message_as_bot_with_override(
                         channel_id,
                         &final_text,
                         root,
                         None,
                         &bot_uid,
                         &bot_token,
+                        Some(customer_name),
+                        None,
                     )
                     .await
                 } else {
-                    mm.post_message_as_bot_with_files(
+                    mm.post_message_as_bot_with_files_and_override(
                         channel_id,
                         &final_text,
                         root,
@@ -1480,6 +1497,8 @@ async fn reimport_single_conversation(
                         &bot_uid,
                         &bot_token,
                         &file_ids,
+                        Some(customer_name),
+                        None,
                     )
                     .await
                 };

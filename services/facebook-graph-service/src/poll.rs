@@ -220,17 +220,19 @@ async fn poll_conversation_new_messages(
                             };
 
                             let result = if file_ids.is_empty() {
-                                mm.post_message_as_bot(
+                                mm.post_message_as_bot_with_override(
                                     &channel_id,
                                     &msg_text,
                                     msg_root,
                                     ts,
                                     &bot_uid,
                                     &bot_token,
+                                    Some(customer_name_str),
+                                    None,
                                 )
                                 .await
                             } else {
-                                mm.post_message_as_bot_with_files(
+                                mm.post_message_as_bot_with_files_and_override(
                                     &channel_id,
                                     &msg_text,
                                     msg_root,
@@ -238,6 +240,8 @@ async fn poll_conversation_new_messages(
                                     &bot_uid,
                                     &bot_token,
                                     &file_ids,
+                                    Some(customer_name_str),
+                                    None,
                                 )
                                 .await
                             };
