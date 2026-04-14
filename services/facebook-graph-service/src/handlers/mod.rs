@@ -1560,3 +1560,287 @@ async fn reimport_single_conversation(
         messages_posted: posted,
     })
 }
+
+/// Migrate PSID-named channels to their correct t_xxx conversation channels.
+///
+/// The old webhook handler incorrectly created channels named after the customer PSID
+/// (e.g. "26617121431218908") instead of the Facebook conversation ID (e.g. "t_1722556802452512").
+/// This endpoint:
+/// 1. Finds all non-t_ open channels that look like PSIDs (numeric names)
+/// 2. Resolves each PSID to the correct t_xxx conversation ID
+/// 3. Deletes all posts from the PSID channel (they'll be reimported to the correct channel)
+/// 4. Archives the PSID channel
+///
+/// POST /api/migrate/psid-channels
+pub async fn migrate_psid_channels(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let mm = &state.mattermost_client;
+    let team_id = mm
+        .get_team_id()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let all_channels = mm
+        .list_channels_by_prefix(&team_id, "")
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let psid_channels: Vec<_> = all_channels
+        .iter()
+        .filter(|c| {
+            c.name != "off-topic"
+                && c.name != "facebook-messages"
+                && !c.name.starts_with("t_")
+                && !c.name.starts_with("__")
+                && !c.name.contains("-")
+                && c.name.chars().all(|c| c.is_ascii_digit())
+        })
+        .collect();
+
+    info!(
+        "PSID migration: found {} PSID-named channels to migrate",
+        psid_channels.len()
+    );
+
+    let auth = mm
+        .get_auth_header()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let client = reqwest::Client::new();
+    let base = state.config.mattermost_url.trim_end_matches('/');
+    let mut migrated = 0u32;
+    let mut archived = 0u32;
+    let mut errors = 0u32;
+    let skipped = 0u32;
+
+    for ch in psid_channels {
+        let psid = &ch.name;
+        info!("Migrating PSID channel: {psid}");
+
+        let conversation_id = match resolve_conversation_id(&state, psid).await {
+            Ok(cid) => cid,
+            Err(e) => {
+                warn!("Failed to resolve PSID {psid}: {e}, skipping channel");
+                errors += 1;
+                continue;
+            }
+        };
+
+        info!("PSID {psid} → conversation_id {conversation_id}");
+
+        let correct_channel_id = match mm
+            .get_or_create_channel(&team_id, &conversation_id, &conversation_id)
+            .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                warn!("Failed to get/create correct channel for {conversation_id}: {e}, skipping");
+                errors += 1;
+                continue;
+            }
+        };
+
+        // Delete all posts from the old PSID channel
+        let mut deleted = 0u32;
+        let mut page: u32 = 0;
+        loop {
+            let url = format!(
+                "{base}/api/v4/channels/{channel_id}/posts?per_page=200&page={page}",
+                channel_id = ch.id,
+            );
+            let resp = client
+                .get(&url)
+                .header("Authorization", format!("Bearer {auth}"))
+                .send()
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            if !resp.status().is_success() {
+                break;
+            }
+
+            let data: serde_json::Value = resp.json().await.unwrap_or_default();
+            let posts = match data.get("posts").and_then(|p| p.as_object()) {
+                Some(p) => p,
+                None => break,
+            };
+
+            if posts.is_empty() {
+                break;
+            }
+
+            for (_, post) in posts {
+                if let Some(pid) = post.get("id").and_then(|i| i.as_str()) {
+                    let del_url = format!("{base}/api/v4/posts/{pid}");
+                    let _ = client
+                        .delete(&del_url)
+                        .header("Authorization", format!("Bearer {auth}"))
+                        .send()
+                        .await;
+                    deleted += 1;
+                }
+            }
+            page += 1;
+        }
+
+        info!("Deleted {deleted} posts from PSID channel {psid}");
+
+        // Reimport messages to the correct t_xxx channel
+        let messages = match crate::graph_api::get_conversation_messages(
+            &state.pool,
+            &conversation_id,
+            &state.config.facebook_page_access_token,
+        )
+        .await
+        {
+            Ok(msgs) => msgs,
+            Err(e) => {
+                warn!("Failed to fetch messages for {conversation_id}: {e}");
+                errors += 1;
+                continue;
+            }
+        };
+
+        let mut messages = messages;
+        messages.sort_by_key(|m| m.created_time);
+
+        let display_name = messages
+            .iter()
+            .find_map(|msg| {
+                if msg.from.id != state.config.facebook_page_id {
+                    Some(msg.from.name.clone())
+                } else {
+                    msg.to.data.first().map(|u| u.name.clone())
+                }
+            })
+            .unwrap_or_else(|| conversation_id.to_string());
+
+        let _ = mm
+            .maybe_update_display_name(&correct_channel_id, &conversation_id, &display_name)
+            .await;
+
+        let mut posted = 0u32;
+        let mut root_id: Option<String> = None;
+
+        for msg in &messages {
+            if msg.from.id == state.config.facebook_page_id {
+                continue;
+            }
+            let text = match &msg.message {
+                Some(t) if !t.trim().is_empty() => t.as_str(),
+                _ => continue,
+            };
+            let cust_id = &msg.from.id;
+            let customer_name = &msg.from.name;
+
+            match mm
+                .get_or_create_customer_bot(cust_id, customer_name, &correct_channel_id)
+                .await
+            {
+                Ok((bot_uid, bot_token)) => {
+                    let root = root_id.as_deref();
+                    match mm
+                        .post_message_as_bot(
+                            &correct_channel_id,
+                            text,
+                            root,
+                            None,
+                            &bot_uid,
+                            &bot_token,
+                        )
+                        .await
+                    {
+                        Ok(post_id) => {
+                            if root_id.is_none() {
+                                mm.set_root_id(&conversation_id, &post_id);
+                                root_id = Some(post_id);
+                            }
+                            posted += 1;
+                        }
+                        Err(_) => {
+                            let root = root_id.as_deref();
+                            if let Ok(post_id) =
+                                mm.post_message(&correct_channel_id, text, root, None).await
+                            {
+                                if root_id.is_none() {
+                                    mm.set_root_id(&conversation_id, &post_id);
+                                    root_id = Some(post_id);
+                                }
+                                posted += 1;
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    let root = root_id.as_deref();
+                    if let Ok(post_id) =
+                        mm.post_message(&correct_channel_id, text, root, None).await
+                    {
+                        if root_id.is_none() {
+                            mm.set_root_id(&conversation_id, &post_id);
+                            root_id = Some(post_id);
+                        }
+                        posted += 1;
+                    }
+                }
+            }
+        }
+
+        for msg in &messages {
+            if msg.from.id != state.config.facebook_page_id {
+                continue;
+            }
+            let text = match &msg.message {
+                Some(t) if !t.trim().is_empty() => t.as_str(),
+                _ => continue,
+            };
+            let root = root_id.as_deref();
+            if let Ok(post_id) = mm.post_message(&correct_channel_id, text, root, None).await {
+                if root_id.is_none() {
+                    mm.set_root_id(&conversation_id, &post_id);
+                    root_id = Some(post_id);
+                }
+                posted += 1;
+            }
+        }
+
+        // Archive the old PSID channel
+        let archive_url = format!("{base}/api/v4/channels/{ch_id}", ch_id = ch.id);
+        let archive_resp = client
+            .put(&archive_url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .json(&serde_json::json!({ "delete_at": chrono::Utc::now().timestamp_millis() }))
+            .send()
+            .await;
+
+        match archive_resp {
+            Ok(resp) if resp.status().is_success() => {
+                info!("Archived PSID channel {psid}");
+                archived += 1;
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                warn!("Failed to archive PSID channel {psid}: {status} {body}");
+            }
+            Err(e) => {
+                warn!("Failed to archive PSID channel {psid}: {e}");
+            }
+        }
+
+        migrated += 1;
+        info!("Migrated PSID {psid} → {conversation_id}: deleted {deleted}, posted {posted}");
+    }
+
+    info!(
+        "PSID migration complete: {migrated} migrated, {archived} archived, {skipped} skipped, {errors} errors"
+    );
+
+    Ok(Json(serde_json::json!({
+        "migrated": migrated,
+        "archived": archived,
+        "skipped": skipped,
+        "errors": errors,
+    })))
+}

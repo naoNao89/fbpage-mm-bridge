@@ -30,8 +30,8 @@ use axum::{
 use crate::config::Config;
 use crate::handlers::{
     exchange_token, get_import_status, health_check, import_all_conversations,
-    import_single_conversation, reimport_all_conversations, reimport_conversation, webhook_handler,
-    webhook_verification,
+    import_single_conversation, migrate_psid_channels, reimport_all_conversations,
+    reimport_conversation, webhook_handler, webhook_verification,
 };
 use crate::services::{CustomerServiceClient, MattermostClient, MessageServiceClient};
 use crate::storage::MinioStorage;
@@ -66,6 +66,7 @@ pub fn create_app(state: AppState) -> Router {
         )
         .route("/api/reimport/:id", post(reimport_conversation))
         .route("/api/reimport", post(reimport_all_conversations))
+        .route("/api/migrate/psid-channels", post(migrate_psid_channels))
         .route("/api/status", get(get_import_status))
         .route("/api/token/exchange", post(exchange_token))
         .with_state(state)
