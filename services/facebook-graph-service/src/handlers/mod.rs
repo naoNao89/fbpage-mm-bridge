@@ -1605,8 +1605,9 @@ pub async fn full_history_reimport(
         match result {
             Ok(summary) => {
                 info!(
-                    "Full history reimport complete: {} conversations processed, {} messages fetched, {} messages posted, {} errors",
+                    "Full history reimport complete: {} conversations processed, {} posts deleted, {} messages fetched, {} messages posted, {} errors",
                     summary.conversations_processed,
+                    summary.posts_deleted,
                     summary.messages_fetched,
                     summary.messages_posted,
                     summary.errors
@@ -1626,6 +1627,7 @@ pub async fn full_history_reimport(
 
 struct FullHistorySummary {
     conversations_processed: u32,
+    posts_deleted: u32,
     messages_fetched: usize,
     messages_posted: u32,
     errors: u32,
@@ -1643,6 +1645,7 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
 
     let mut summary = FullHistorySummary {
         conversations_processed: 0,
+        posts_deleted: 0,
         messages_fetched: 0,
         messages_posted: 0,
         errors: 0,
@@ -1711,6 +1714,52 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
         let _ = mm
             .maybe_update_display_name(&channel_id, conv_id, &display_name)
             .await;
+
+        mm.clear_root_id(conv_id);
+        mm.clear_root_id_db(&state.pool, conv_id);
+
+        let auth = mm.get_auth_header().await?;
+        let client = reqwest::Client::new();
+        let base = state.config.mattermost_url.trim_end_matches('/');
+        let mut page = 0u32;
+        loop {
+            let url = format!("{base}/api/v4/channels/{channel_id}/posts?per_page=200&page={page}");
+            let resp = match client
+                .get(&url)
+                .header("Authorization", format!("Bearer {auth}"))
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(_) => break,
+            };
+            if !resp.status().is_success() {
+                break;
+            }
+            let data: serde_json::Value = match resp.json().await {
+                Ok(d) => d,
+                Err(_) => break,
+            };
+            let posts = match data.get("posts").and_then(|p| p.as_object()) {
+                Some(p) => p,
+                None => break,
+            };
+            if posts.is_empty() {
+                break;
+            }
+            for (_, post) in posts {
+                if let Some(pid) = post.get("id").and_then(|i| i.as_str()) {
+                    let del_url = format!("{base}/api/v4/posts/{pid}");
+                    let _ = client
+                        .delete(&del_url)
+                        .header("Authorization", format!("Bearer {auth}"))
+                        .send()
+                        .await;
+                    summary.posts_deleted += 1;
+                }
+            }
+            page += 1;
+        }
 
         {
             let mut cache = state.conversation_id_cache.write().await;
