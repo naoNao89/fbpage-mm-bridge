@@ -1767,12 +1767,13 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
             };
 
             let root = root_id.as_deref();
+            let msg_ts = Some(msg.created_time.timestamp_millis());
             let post_result = if file_ids.is_empty() {
                 mm.post_message_as_bot_with_override(
                     &channel_id,
                     &final_text,
                     root,
-                    None,
+                    msg_ts,
                     &bot_uid,
                     &bot_token,
                     Some(customer_name),
@@ -1784,7 +1785,7 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
                     &channel_id,
                     &final_text,
                     root,
-                    None,
+                    msg_ts,
                     &bot_uid,
                     &bot_token,
                     &file_ids,
@@ -1839,10 +1840,12 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
             };
 
             let root = root_id.as_deref();
+            let msg_ts = Some(msg.created_time.timestamp_millis());
             let post_result = if file_ids.is_empty() {
-                mm.post_message(&channel_id, &final_text, root, None).await
+                mm.post_message(&channel_id, &final_text, root, msg_ts)
+                    .await
             } else {
-                mm.post_message_with_files(&channel_id, &final_text, root, None, &file_ids)
+                mm.post_message_with_files(&channel_id, &final_text, root, msg_ts, &file_ids)
                     .await
             };
 
