@@ -1721,6 +1721,7 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
         let auth = mm.get_auth_header().await?;
         let client = reqwest::Client::new();
         let base = state.config.mattermost_url.trim_end_matches('/');
+        let mut deleted_this_channel = 0u32;
         let mut page = 0u32;
         loop {
             let url = format!("{base}/api/v4/channels/{channel_id}/posts?per_page=200&page={page}");
@@ -1755,10 +1756,17 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
                         .header("Authorization", format!("Bearer {auth}"))
                         .send()
                         .await;
-                    summary.posts_deleted += 1;
+                    deleted_this_channel += 1;
                 }
             }
             page += 1;
+        }
+        if deleted_this_channel > 0 {
+            info!(
+                "Full history reimport: deleted {} posts from channel {}",
+                deleted_this_channel, conv_id
+            );
+            summary.posts_deleted += deleted_this_channel;
         }
 
         {
