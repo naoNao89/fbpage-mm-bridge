@@ -7,7 +7,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -1592,4 +1592,274 @@ async fn reimport_single_conversation(
         messages_fetched: total,
         messages_posted: posted,
     })
+}
+
+pub async fn full_history_reimport(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    info!("Starting full history reimport from Facebook Graph API");
+
+    // Spawn background task to avoid HTTP timeout
+    tokio::spawn(async move {
+        let result = full_history_reimport_task(&state).await;
+        match result {
+            Ok(summary) => {
+                info!(
+                    "Full history reimport complete: {} conversations processed, {} messages fetched, {} messages posted, {} errors",
+                    summary.conversations_processed,
+                    summary.messages_fetched,
+                    summary.messages_posted,
+                    summary.errors
+                );
+            }
+            Err(e) => {
+                error!("Full history reimport failed: {}", e);
+            }
+        }
+    });
+
+    Ok(Json(serde_json::json!({
+        "status": "started",
+        "message": "Full history reimport running in background. Check logs for progress."
+    })))
+}
+
+struct FullHistorySummary {
+    conversations_processed: u32,
+    messages_fetched: usize,
+    messages_posted: u32,
+    errors: u32,
+}
+
+async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySummary, anyhow::Error> {
+    let mm = &state.mattermost_client;
+    let team_id = mm.get_team_id().await?;
+
+    let conversations = graph_api::get_conversations(&state.pool, &state.config).await?;
+    info!(
+        "Full history reimport: found {} total conversations on Facebook",
+        conversations.len()
+    );
+
+    let mut summary = FullHistorySummary {
+        conversations_processed: 0,
+        messages_fetched: 0,
+        messages_posted: 0,
+        errors: 0,
+    };
+
+    for conv in &conversations {
+        let conv_id = &conv.id;
+
+        if !conv_id.starts_with("t_") {
+            continue;
+        }
+
+        let messages = match graph_api::get_conversation_messages(
+            &state.pool,
+            conv_id,
+            &state.config.facebook_page_access_token,
+        )
+        .await
+        {
+            Ok(msgs) => msgs,
+            Err(e) => {
+                warn!(
+                    "Full history reimport: failed to fetch messages for {}: {}",
+                    conv_id, e
+                );
+                summary.errors += 1;
+                continue;
+            }
+        };
+
+        if messages.is_empty() {
+            continue;
+        }
+
+        summary.messages_fetched += messages.len();
+
+        let mut messages_sorted = messages;
+        messages_sorted.sort_by_key(|m| m.created_time);
+
+        let display_name = messages_sorted
+            .iter()
+            .find_map(|msg| {
+                if msg.from.id != state.config.facebook_page_id {
+                    Some(msg.from.name.clone())
+                } else {
+                    msg.to.data.first().map(|u| u.name.clone())
+                }
+            })
+            .unwrap_or_else(|| conv_id.clone());
+
+        let channel_id = match mm
+            .get_or_create_channel(&team_id, conv_id, &display_name)
+            .await
+        {
+            Ok(cid) => cid,
+            Err(e) => {
+                warn!(
+                    "Full history reimport: failed to create channel for {}: {}",
+                    conv_id, e
+                );
+                summary.errors += 1;
+                continue;
+            }
+        };
+
+        let _ = mm
+            .maybe_update_display_name(&channel_id, conv_id, &display_name)
+            .await;
+
+        {
+            let mut cache = state.conversation_id_cache.write().await;
+            for msg in &messages_sorted {
+                if msg.from.id != state.config.facebook_page_id {
+                    cache.insert(msg.from.id.clone(), conv_id.clone());
+                }
+            }
+        }
+
+        let mut root_id: Option<String> = None;
+
+        for msg in &messages_sorted {
+            if msg.from.id == state.config.facebook_page_id {
+                continue;
+            }
+            let text = msg.message.as_deref().unwrap_or("");
+            let attachments = crate::media::extract_attachments_from_graph(msg);
+            if text.trim().is_empty() && attachments.is_empty() {
+                continue;
+            }
+            let customer_name = &msg.from.name;
+            let cust_id = &msg.from.id;
+
+            let bot_result = mm
+                .get_or_create_customer_bot(cust_id, customer_name, &channel_id)
+                .await;
+
+            let (bot_uid, bot_token) = match bot_result {
+                Ok((uid, tok)) => (uid, tok),
+                Err(e) => {
+                    warn!(
+                        "Full history reimport: bot creation failed for {}: {}",
+                        cust_id, e
+                    );
+                    continue;
+                }
+            };
+
+            let (final_text, file_ids) = if !attachments.is_empty() {
+                crate::media::process_attachments_for_post(
+                    state,
+                    mm,
+                    &channel_id,
+                    text,
+                    &attachments,
+                    &msg.id,
+                    None,
+                    Some(&bot_token),
+                )
+                .await
+            } else {
+                (text.to_string(), Vec::new())
+            };
+
+            let root = root_id.as_deref();
+            let post_result = if file_ids.is_empty() {
+                mm.post_message_as_bot_with_override(
+                    &channel_id,
+                    &final_text,
+                    root,
+                    None,
+                    &bot_uid,
+                    &bot_token,
+                    Some(customer_name),
+                    None,
+                )
+                .await
+            } else {
+                mm.post_message_as_bot_with_files_and_override(
+                    &channel_id,
+                    &final_text,
+                    root,
+                    None,
+                    &bot_uid,
+                    &bot_token,
+                    &file_ids,
+                    Some(customer_name),
+                    None,
+                )
+                .await
+            };
+
+            match post_result {
+                Ok(post_id) => {
+                    if root_id.is_none() {
+                        mm.set_root_id(conv_id, &post_id);
+                        root_id = Some(post_id);
+                    }
+                    mm.mark_posted(&msg.id);
+                    summary.messages_posted += 1;
+                }
+                Err(e) => {
+                    warn!(
+                        "Full history reimport: bot post failed for {}: {}",
+                        conv_id, e
+                    );
+                }
+            }
+        }
+
+        for msg in &messages_sorted {
+            if msg.from.id != state.config.facebook_page_id {
+                continue;
+            }
+            let text = msg.message.as_deref().unwrap_or("");
+            let attachments = crate::media::extract_attachments_from_graph(msg);
+            if text.trim().is_empty() && attachments.is_empty() {
+                continue;
+            }
+
+            let (final_text, file_ids) = if !attachments.is_empty() {
+                crate::media::process_attachments_for_post(
+                    state,
+                    mm,
+                    &channel_id,
+                    text,
+                    &attachments,
+                    &msg.id,
+                    None,
+                    None,
+                )
+                .await
+            } else {
+                (text.to_string(), Vec::new())
+            };
+
+            let root = root_id.as_deref();
+            let post_result = if file_ids.is_empty() {
+                mm.post_message(&channel_id, &final_text, root, None).await
+            } else {
+                mm.post_message_with_files(&channel_id, &final_text, root, None, &file_ids)
+                    .await
+            };
+
+            if let Ok(post_id) = post_result {
+                if root_id.is_none() {
+                    mm.set_root_id(conv_id, &post_id);
+                    root_id = Some(post_id);
+                }
+                mm.mark_posted(&msg.id);
+                summary.messages_posted += 1;
+            }
+        }
+
+        summary.conversations_processed += 1;
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+
+    Ok(summary)
 }
