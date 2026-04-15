@@ -1636,11 +1636,14 @@ struct FullHistorySummary {
 async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySummary, anyhow::Error> {
     let mm = &state.mattermost_client;
     let team_id = mm.get_team_id().await?;
+    let start_time = Instant::now();
+    let max_duration = Duration::from_secs(3600 * 2); // 2 hour max
 
     let conversations = graph_api::get_conversations(&state.pool, &state.config).await?;
+    let total_conversations = conversations.len();
     info!(
         "Full history reimport: found {} total conversations on Facebook",
-        conversations.len()
+        total_conversations
     );
 
     let mut summary = FullHistorySummary {
@@ -1652,6 +1655,16 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
     };
 
     for conv in &conversations {
+        // Check timeout - stop after 2 hours to avoid blocking forever
+        if start_time.elapsed() > max_duration {
+            warn!(
+                "Full history reimport timed out after 2 hours: {} conversations processed, {} messages posted",
+                summary.conversations_processed,
+                summary.messages_posted
+            );
+            break;
+        }
+
         let conv_id = &conv.id;
 
         if !conv_id.starts_with("t_") {
@@ -1917,6 +1930,17 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
         }
 
         summary.conversations_processed += 1;
+
+        // Log progress every 100 conversations
+        if summary.conversations_processed % 100 == 0 {
+            info!(
+                "Full history reimport progress: {}/{} conversations, {} posts deleted, {} messages posted",
+                summary.conversations_processed,
+                total_conversations,
+                summary.posts_deleted,
+                summary.messages_posted
+            );
+        }
 
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
