@@ -169,6 +169,33 @@ impl MattermostClient {
             .insert(external_id.to_string())
     }
 
+    pub async fn mark_posted_persistent(
+        &self,
+        external_id: &str,
+        conversation_id: &str,
+        mattermost_post_id: &str,
+    ) -> bool {
+        if let Some(pool) = &self.pool {
+            match crate::db::mark_message_posted(
+                pool,
+                external_id,
+                conversation_id,
+                mattermost_post_id,
+            )
+            .await
+            {
+                Ok(true) => {
+                    self.mark_posted(external_id);
+                    return true;
+                }
+                Ok(false) => return false,
+                Err(e) => tracing::warn!("Failed to persist mark_posted to DB: {e}"),
+            }
+        }
+        self.mark_posted(external_id);
+        true
+    }
+
     /// Ensure a valid token is available
     pub async fn ensure_token(&self) -> Result<()> {
         let needs_login = self.token.lock().expect("token lock poisoned").is_none();

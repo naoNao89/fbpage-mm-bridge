@@ -1869,9 +1869,9 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
                 Ok(post_id) => {
                     if root_id.is_none() {
                         mm.set_root_id(conv_id, &post_id);
-                        root_id = Some(post_id);
+                        root_id = Some(post_id.clone());
                     }
-                    mm.mark_posted(&msg.id);
+                    mm.mark_posted_persistent(&msg.id, conv_id, &post_id).await;
                     summary.messages_posted += 1;
                 }
                 Err(e) => {
@@ -1922,9 +1922,9 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
             if let Ok(post_id) = post_result {
                 if root_id.is_none() {
                     mm.set_root_id(conv_id, &post_id);
-                    root_id = Some(post_id);
+                    root_id = Some(post_id.clone());
                 }
-                mm.mark_posted(&msg.id);
+                mm.mark_posted_persistent(&msg.id, conv_id, &post_id).await;
                 summary.messages_posted += 1;
             }
         }

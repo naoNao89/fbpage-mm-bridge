@@ -439,3 +439,45 @@ pub async fn load_single_mm_cache(
 
     Ok(result.map(|(v,)| v))
 }
+
+/// Check if a message ID has been posted to Mattermost.
+pub async fn is_message_posted(pool: &PgPool, external_id: &str) -> anyhow::Result<bool> {
+    let result = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM posted_message_ids WHERE external_id = $1
+        )
+        "#,
+    )
+    .bind(external_id)
+    .fetch_one(pool)
+    .await
+    .context("Failed to check if message was posted")?;
+
+    Ok(result)
+}
+
+/// Mark a message ID as posted to Mattermost.
+pub async fn mark_message_posted(
+    pool: &PgPool,
+    external_id: &str,
+    conversation_id: &str,
+    mattermost_post_id: &str,
+) -> anyhow::Result<bool> {
+    let result = sqlx::query_scalar::<_, bool>(
+        r#"
+        INSERT INTO posted_message_ids (external_id, conversation_id, mattermost_post_id)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (external_id) DO NOTHING
+        RETURNING TRUE
+        "#,
+    )
+    .bind(external_id)
+    .bind(conversation_id)
+    .bind(mattermost_post_id)
+    .fetch_optional(pool)
+    .await
+    .context("Failed to mark message as posted")?;
+
+    Ok(result.is_some())
+}
