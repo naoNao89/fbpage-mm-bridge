@@ -186,7 +186,10 @@ async fn poll_conversation_new_messages(
 
         match state.message_client.store_message(message_payload).await {
             Ok(msg_resp) => {
-                if !mm.mark_posted(&msg.id) {
+                if !mm
+                    .mark_posted_persistent(&msg.id, conversation_id, &msg.id)
+                    .await
+                {
                     continue;
                 }
 
