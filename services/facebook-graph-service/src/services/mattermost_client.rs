@@ -186,11 +186,18 @@ impl MattermostClient {
             {
                 Ok(true) => {
                     self.mark_posted(external_id);
+                    tracing::debug!(
+                        "Persisted mark_posted to DB: {} in conversation {}",
+                        external_id,
+                        conversation_id
+                    );
                     return true;
                 }
                 Ok(false) => return false,
                 Err(e) => tracing::warn!("Failed to persist mark_posted to DB: {e}"),
             }
+        } else {
+            tracing::warn!("MattermostClient pool is None, using in-memory only");
         }
         self.mark_posted(external_id);
         true
