@@ -1225,9 +1225,10 @@ pub async fn reimport_conversation(
                     Ok(post_id) => {
                         if root_id.is_none() {
                             mm.set_root_id(&conversation_id, &post_id);
-                            root_id = Some(post_id);
+                            root_id = Some(post_id.clone());
                         }
-                        mm.mark_posted(&msg.id);
+                        mm.mark_posted_persistent(&msg.id, &conversation_id, &post_id)
+                            .await;
                         posted += 1;
                     }
                     Err(e) => {
@@ -1236,9 +1237,10 @@ pub async fn reimport_conversation(
                         if let Ok(post_id) = mm.post_message(&channel_id, text, root, None).await {
                             if root_id.is_none() {
                                 mm.set_root_id(&conversation_id, &post_id);
-                                root_id = Some(post_id);
+                                root_id = Some(post_id.clone());
                             }
-                            mm.mark_posted(&msg.id);
+                            mm.mark_posted_persistent(&msg.id, &conversation_id, &post_id)
+                                .await;
                             posted += 1;
                         }
                     }
@@ -1250,9 +1252,10 @@ pub async fn reimport_conversation(
                 if let Ok(post_id) = mm.post_message(&channel_id, text, root, None).await {
                     if root_id.is_none() {
                         mm.set_root_id(&conversation_id, &post_id);
-                        root_id = Some(post_id);
+                        root_id = Some(post_id.clone());
                     }
-                    mm.mark_posted(&msg.id);
+                    mm.mark_posted_persistent(&msg.id, &conversation_id, &post_id)
+                        .await;
                     posted += 1;
                 }
             }
@@ -1272,9 +1275,10 @@ pub async fn reimport_conversation(
         if let Ok(post_id) = mm.post_message(&channel_id, text, root, None).await {
             if root_id.is_none() {
                 mm.set_root_id(&conversation_id, &post_id);
-                root_id = Some(post_id);
+                root_id = Some(post_id.clone());
             }
-            mm.mark_posted(&msg.id);
+            mm.mark_posted_persistent(&msg.id, &conversation_id, &post_id)
+                .await;
             posted += 1;
         }
     }
