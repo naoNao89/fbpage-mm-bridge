@@ -481,3 +481,17 @@ pub async fn mark_message_posted(
 
     Ok(result.is_some())
 }
+
+pub async fn clear_posted_messages(pool: &PgPool, conversation_id: &str) -> anyhow::Result<u64> {
+    let result = sqlx::query_scalar::<_, i64>(
+        r#"
+        DELETE FROM posted_message_ids WHERE conversation_id = $1
+        "#,
+    )
+    .bind(conversation_id)
+    .fetch_one(pool)
+    .await
+    .context("Failed to clear posted messages")?;
+
+    Ok(result as u64)
+}

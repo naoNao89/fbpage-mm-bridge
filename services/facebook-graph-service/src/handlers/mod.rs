@@ -1103,6 +1103,7 @@ pub async fn reimport_conversation(
 
     mm.clear_root_id(&conversation_id);
     mm.clear_root_id_db(&state.pool, &conversation_id);
+    let _ = crate::db::clear_posted_messages(&state.pool, &conversation_id).await;
 
     // Delete all existing posts in the channel
     let auth = mm
@@ -1366,6 +1367,7 @@ async fn reimport_single_conversation(
 
     mm.clear_root_id(conversation_id);
     mm.clear_root_id_db(&state.pool, conversation_id);
+    let _ = crate::db::clear_posted_messages(&state.pool, conversation_id).await;
 
     let auth = mm.get_auth_header().await?;
     let client = reqwest::Client::new();
@@ -1742,6 +1744,7 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
 
         mm.clear_root_id(conv_id);
         mm.clear_root_id_db(&state.pool, conv_id);
+        let _ = crate::db::clear_posted_messages(&state.pool, conv_id).await;
 
         let auth = mm.get_auth_header().await?;
         let client = reqwest::Client::new();
