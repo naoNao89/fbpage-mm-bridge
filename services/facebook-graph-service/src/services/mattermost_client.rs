@@ -1457,6 +1457,14 @@ impl MattermostClient {
             ));
         }
 
+        if status.as_u16() == 400 && body.contains("root_id.app_error") {
+            tracing::warn!(
+                "Bot post got Invalid RootId, clearing root cache for channel {channel_id}"
+            );
+            self.clear_root_id(channel_id);
+            return Err(anyhow::anyhow!("Invalid RootId cleared for {channel_id}"));
+        }
+
         Err(anyhow::anyhow!("Bot post failed {status}: {body}"))
     }
 
