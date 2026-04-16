@@ -1520,9 +1520,12 @@ async fn reimport_single_conversation(
                             mm.set_root_id(conversation_id, &post_id);
                             root_id = Some(post_id.clone());
                         }
-                        mm.mark_posted_persistent(&msg.id, conversation_id, &post_id)
-                            .await;
-                        posted += 1;
+                        if mm
+                            .mark_posted_persistent(&msg.id, conversation_id, &post_id)
+                            .await
+                        {
+                            posted += 1;
+                        }
                     }
                     Err(e) => {
                         tracing::warn!("Reimport: bot post failed for {}: {}", conversation_id, e);
@@ -1534,9 +1537,12 @@ async fn reimport_single_conversation(
                                 mm.set_root_id(conversation_id, &post_id);
                                 root_id = Some(post_id.clone());
                             }
-                            mm.mark_posted_persistent(&msg.id, conversation_id, &post_id)
-                                .await;
-                            posted += 1;
+                            if mm
+                                .mark_posted_persistent(&msg.id, conversation_id, &post_id)
+                                .await
+                            {
+                                posted += 1;
+                            }
                         }
                     }
                 }
@@ -1549,9 +1555,12 @@ async fn reimport_single_conversation(
                         mm.set_root_id(conversation_id, &post_id);
                         root_id = Some(post_id.clone());
                     }
-                    mm.mark_posted_persistent(&msg.id, conversation_id, &post_id)
-                        .await;
-                    posted += 1;
+                    if mm
+                        .mark_posted_persistent(&msg.id, conversation_id, &post_id)
+                        .await
+                    {
+                        posted += 1;
+                    }
                 }
             }
         }
@@ -1595,9 +1604,12 @@ async fn reimport_single_conversation(
                 mm.set_root_id(conversation_id, &post_id);
                 root_id = Some(post_id.clone());
             }
-            mm.mark_posted_persistent(&msg.id, conversation_id, &post_id)
-                .await;
-            posted += 1;
+            if mm
+                .mark_posted_persistent(&msg.id, conversation_id, &post_id)
+                .await
+            {
+                posted += 1;
+            }
         }
     }
 
@@ -1886,8 +1898,9 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
                         mm.set_root_id(conv_id, &post_id);
                         root_id = Some(post_id.clone());
                     }
-                    mm.mark_posted_persistent(&msg.id, conv_id, &post_id).await;
-                    summary.messages_posted += 1;
+                    if mm.mark_posted_persistent(&msg.id, conv_id, &post_id).await {
+                        summary.messages_posted += 1;
+                    }
                 }
                 Err(e) => {
                     warn!(
@@ -1939,8 +1952,9 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
                     mm.set_root_id(conv_id, &post_id);
                     root_id = Some(post_id.clone());
                 }
-                mm.mark_posted_persistent(&msg.id, conv_id, &post_id).await;
-                summary.messages_posted += 1;
+                if mm.mark_posted_persistent(&msg.id, conv_id, &post_id).await {
+                    summary.messages_posted += 1;
+                }
             }
         }
 
