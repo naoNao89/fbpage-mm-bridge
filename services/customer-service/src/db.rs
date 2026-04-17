@@ -14,45 +14,22 @@ pub async fn create_pool(database_url: &str) -> Result<PgPool> {
 }
 
 /// Get or create a customer by platform user ID
-///
-/// This is the primary method for customer resolution. It first attempts to find
-/// an existing customer by platform_user_id and platform. If not found, it creates
-/// a new customer.
 pub async fn get_or_create_customer(
     pool: &PgPool,
     platform_user_id: &str,
     platform: &str,
     name: Option<&str>,
 ) -> Result<Customer> {
-    // Try to find existing customer
-    let existing = sqlx::query_as::<_, Customer>(
-        "SELECT * FROM customers WHERE platform_user_id = $1 AND platform = $2",
-    )
-    .bind(platform_user_id)
-    .bind(platform)
-    .fetch_optional(pool)
-    .await?;
-
-    if let Some(customer) = existing {
-        let needs_name_update = customer.name.as_ref().map(|n| n.is_empty()).unwrap_or(true);
-        if needs_name_update && name.map(|n| !n.is_empty()).unwrap_or(false) {
-            if let Ok(Some(updated)) = update_customer(pool, customer.id, name, None).await {
-                return Ok(updated);
-            }
-        }
-        return Ok(customer);
-    }
-
-    // Create new customer
-    let id = Uuid::new_v4();
     let customer = sqlx::query_as::<_, Customer>(
         r#"
         INSERT INTO customers (id, platform_user_id, platform, name, created_at)
         VALUES ($1, $2, $3, $4, NOW())
+        ON CONFLICT (platform_user_id, platform) DO UPDATE SET
+            name = COALESCE(NULLIF(customers.name, ''), EXCLUDED.name)
         RETURNING *
         "#,
     )
-    .bind(id)
+    .bind(Uuid::new_v4())
     .bind(platform_user_id)
     .bind(platform)
     .bind(name)
