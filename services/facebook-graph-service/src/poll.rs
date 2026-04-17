@@ -119,7 +119,7 @@ async fn poll_conversation_new_messages(
 
     let ordered_msgs: Vec<&crate::models::GraphMessage> = incoming_msgs
         .into_iter()
-        .chain(outgoing_msgs.into_iter())
+        .chain(outgoing_msgs)
         .collect();
 
     for msg in ordered_msgs {
