@@ -34,6 +34,12 @@ pub async fn get_or_create_customer(
     .await?;
 
     if let Some(customer) = existing {
+        let needs_name_update = customer.name.as_ref().map(|n| n.is_empty()).unwrap_or(true);
+        if needs_name_update && name.map(|n| !n.is_empty()).unwrap_or(false) {
+            if let Ok(Some(updated)) = update_customer(pool, customer.id, name, None).await {
+                return Ok(updated);
+            }
+        }
         return Ok(customer);
     }
 
