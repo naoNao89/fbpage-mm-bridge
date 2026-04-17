@@ -117,10 +117,8 @@ async fn poll_conversation_new_messages(
         }
     }
 
-    let ordered_msgs: Vec<&crate::models::GraphMessage> = incoming_msgs
-        .into_iter()
-        .chain(outgoing_msgs)
-        .collect();
+    let ordered_msgs: Vec<&crate::models::GraphMessage> =
+        incoming_msgs.into_iter().chain(outgoing_msgs).collect();
 
     for msg in ordered_msgs {
         let is_from_page = msg.from.id == state.config.facebook_page_id;

@@ -1231,7 +1231,11 @@ impl MattermostClient {
         slug
     }
 
-    pub fn generate_bot_username_with_psid(&self, platform_user_id: &str, display_name: &str) -> String {
+    pub fn generate_bot_username_with_psid(
+        &self,
+        platform_user_id: &str,
+        display_name: &str,
+    ) -> String {
         let name_slug = Self::generate_bot_username_from(display_name);
         let psid_prefix = if platform_user_id.len() >= 8 {
             platform_user_id[..8].to_lowercase()
