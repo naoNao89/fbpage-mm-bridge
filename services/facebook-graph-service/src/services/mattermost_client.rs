@@ -1096,13 +1096,16 @@ impl MattermostClient {
         let auth = self.get_auth_header().await?;
         let team_id = self.get_team_id().await?;
 
-        let slug = self.generate_bot_username(display_name);
+        // Use PSID prefix to ensure unique usernames, preventing collisions when
+        // multiple customers have the same display name
+        let slug = self.generate_bot_username_with_psid(platform_user_id, display_name);
+        let description = format!("FB Page customer PSID: {}", platform_user_id);
 
         let create_url = format!("{}/api/v4/bots", self.base_url);
         let payload = serde_json::json!({
             "username": slug,
             "display_name": display_name,
-            "description": "FB Page customer"
+            "description": description
         });
 
         let resp = self
@@ -1183,10 +1186,6 @@ impl MattermostClient {
         Ok((bot_user_id, bot_token))
     }
 
-    fn generate_bot_username(&self, display_name: &str) -> String {
-        Self::generate_bot_username_from(display_name)
-    }
-
     pub fn generate_bot_username_from(display_name: &str) -> String {
         let ascii: String = display_name
             .to_lowercase()
@@ -1230,6 +1229,22 @@ impl MattermostClient {
             return slug[..max_len].to_string();
         }
         slug
+    }
+
+    pub fn generate_bot_username_with_psid(&self, platform_user_id: &str, display_name: &str) -> String {
+        let name_slug = Self::generate_bot_username_from(display_name);
+        let psid_prefix = if platform_user_id.len() >= 8 {
+            platform_user_id[..8].to_lowercase()
+        } else {
+            platform_user_id.to_lowercase()
+        };
+        let combined = format!("{}-{}", psid_prefix, name_slug);
+        let max_len = 22;
+        if combined.len() > max_len {
+            combined[..max_len].to_string()
+        } else {
+            combined
+        }
     }
 
     async fn resolve_bot_user_by_username(&self, username: &str) -> Result<String> {
