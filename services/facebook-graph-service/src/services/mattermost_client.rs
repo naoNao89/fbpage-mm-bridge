@@ -1099,7 +1099,7 @@ impl MattermostClient {
         // Use PSID prefix to ensure unique usernames, preventing collisions when
         // multiple customers have the same display name
         let slug = self.generate_bot_username_with_psid(platform_user_id, display_name);
-        let description = format!("FB Page customer PSID: {}", platform_user_id);
+        let description = format!("FB Page customer PSID: {platform_user_id}");
 
         let create_url = format!("{}/api/v4/bots", self.base_url);
         let payload = serde_json::json!({
@@ -1242,7 +1242,7 @@ impl MattermostClient {
         } else {
             platform_user_id.to_lowercase()
         };
-        let combined = format!("{}-{}", psid_prefix, name_slug);
+        let combined = format!("{psid_prefix}-{name_slug}");
         let max_len = 22;
         if combined.len() > max_len {
             combined[..max_len].to_string()
