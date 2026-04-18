@@ -619,12 +619,6 @@ pub struct WebhookSender {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct WebhookPostback {
-    pub title: Option<String>,
-    pub payload: String,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct WebhookMessage {
     pub mid: Option<String>,
     pub text: Option<String>,
