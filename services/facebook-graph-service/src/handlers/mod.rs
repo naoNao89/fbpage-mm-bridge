@@ -122,28 +122,37 @@ pub async fn instagram_webhook_handler(
             info!("Instagram: customer_id={}, text={:?}, external_id={:?}", customer_id, text, external_id);
 
             if let Some(msg_text) = text {
-                if let Ok(customer) = state
+                info!("Instagram: Calling customer_client.get_or_create_customer");
+                match state
                     .customer_client
                     .get_or_create_customer(&customer_id, "instagram", None)
                     .await
                 {
-                    let conv_id = format!("ig_{}", customer_id);
-                    let payload = MessageServicePayload {
-                        conversation_id: conv_id.clone(),
-                        customer_id: customer.id,
-                        platform: "instagram".to_string(),
-                        direction: direction.to_string(),
-                        message_text: Some(msg_text.clone()),
-                        external_id: external_id.clone(),
-                        created_at: chrono::Utc::now(),
-                    };
-                    let _ = state.message_client.store_message(payload).await;
+                    Ok(customer) => {
+                        info!("Instagram: Got customer: {:?}", customer);
+                        let conv_id = format!("ig_{}", customer_id);
+                        let payload = MessageServicePayload {
+                            conversation_id: conv_id.clone(),
+                            customer_id: customer.id,
+                            platform: "instagram".to_string(),
+                            direction: direction.to_string(),
+                            message_text: Some(msg_text.clone()),
+                            external_id: external_id.clone(),
+                            created_at: chrono::Utc::now(),
+                        };
+                        info!("Instagram: Storing message to message_service");
+                        let _ = state.message_client.store_message(payload).await;
 
-                    let display_name = customer.name.as_deref().unwrap_or(&customer_id);
-                    let _ = state
-                        .mattermost_client
-                        .post_message_with_override(&conv_id, &msg_text, None, None, Some(display_name), None)
-                        .await;
+                        let display_name = customer.name.as_deref().unwrap_or(&customer_id);
+                        info!("Instagram: Posting to Mattermost, conv_id={}, display_name={}", conv_id, display_name);
+                        let _ = state
+                            .mattermost_client
+                            .post_message_with_override(&conv_id, &msg_text, None, None, Some(display_name), None)
+                            .await;
+                    }
+                    Err(e) => {
+                        error!("Instagram: Failed to get/create customer: {:?}", e);
+                    }
                 }
             }
         }
