@@ -80,8 +80,10 @@ pub async fn instagram_webhook_handler(
     };
 
     for entry in payload.entry {
-        debug!("Processing Instagram entry: {}", entry.id);
+        info!("Processing Instagram entry: {}", entry.id);
         for msg_event in entry.messaging {
+            info!("Instagram messaging event: sender={:?}, recipient={:?}, message={:?}, postback={:?}", 
+                  msg_event.sender, msg_event.recipient, msg_event.message, msg_event.postback);
             let sender_id = match &msg_event.sender.id {
                 Some(id) => id,
                 None => continue,
@@ -113,8 +115,11 @@ pub async fn instagram_webhook_handler(
                 text = Some(postback.title.clone().unwrap_or_else(|| postback.payload.clone()));
                 external_id = None;
             } else {
+                info!("Instagram: No message or postback found, skipping");
                 continue;
             }
+
+            info!("Instagram: customer_id={}, text={:?}, external_id={:?}", customer_id, text, external_id);
 
             if let Some(msg_text) = text {
                 if let Ok(customer) = state
