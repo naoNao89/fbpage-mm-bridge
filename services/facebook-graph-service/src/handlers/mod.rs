@@ -1961,7 +1961,7 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
         summary.conversations_processed += 1;
 
         // Log progress every 100 conversations
-        if summary.conversations_processed % 100 == 0 {
+        if summary.conversations_processed.is_multiple_of(100) {
             info!(
                 "Full history reimport progress: {}/{} conversations, {} posts deleted, {} messages posted",
                 summary.conversations_processed,
