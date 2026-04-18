@@ -52,6 +52,129 @@ pub async fn webhook_verification(
     Ok(params.hub_challenge)
 }
 
+pub async fn instagram_webhook_verification(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<WebhookVerificationParams>,
+) -> Result<String, (StatusCode, String)> {
+    if params.hub_mode != "subscribe" {
+        return Err((StatusCode::BAD_REQUEST, "Invalid hub.mode".to_string()));
+    }
+    if params.hub_verify_token != state.config.instagram_webhook_verify_token {
+        return Err((StatusCode::FORBIDDEN, "Invalid verify token".to_string()));
+    }
+    Ok(params.hub_challenge)
+}
+
+pub async fn instagram_webhook_handler(
+    State(state): State<AppState>,
+    body: String,
+) -> Result<StatusCode, (StatusCode, String)> {
+    info!("Received Instagram webhook event: {}", &body);
+
+    let payload = match serde_json::from_str::<InstagramWebhookPayload>(&body) {
+        Ok(p) => p,
+        Err(e) => {
+            error!("Failed to parse Instagram webhook payload: {e}");
+            return Ok(StatusCode::OK);
+        }
+    };
+
+    for entry in payload.entry {
+        debug!("Processing Instagram entry: {}", entry.id);
+        for msg_event in entry.messaging {
+            let sender_id = match &msg_event.sender.id {
+                Some(id) => id,
+                None => continue,
+            };
+            let recipient_id = match &msg_event.recipient.id {
+                Some(id) => id,
+                None => continue,
+            };
+
+            let is_echo = msg_event
+                .message
+                .as_ref()
+                .and_then(|m| m.is_echo)
+                .unwrap_or(false);
+
+            let (customer_id, direction) = if is_echo {
+                (recipient_id.clone(), "outgoing")
+            } else {
+                (sender_id.clone(), "incoming")
+            };
+
+            let text: Option<String>;
+            let external_id: Option<String>;
+
+            if let Some(ref message) = msg_event.message {
+                text = message.text.clone();
+                external_id = message.mid.clone();
+            } else if let Some(ref postback) = msg_event.postback {
+                text = Some(postback.title.clone().unwrap_or_else(|| postback.payload.clone()));
+                external_id = None;
+            } else {
+                continue;
+            }
+
+            if let Some(msg_text) = text {
+                if let Ok(customer) = state
+                    .customer_client
+                    .get_or_create_customer(&customer_id, "instagram", None)
+                    .await
+                {
+                    let conv_id = format!("ig_{}", customer_id);
+                    let payload = MessageServicePayload {
+                        conversation_id: conv_id.clone(),
+                        customer_id: customer.id,
+                        platform: "instagram".to_string(),
+                        direction: direction.to_string(),
+                        message_text: Some(msg_text.clone()),
+                        external_id: external_id.clone(),
+                        created_at: chrono::Utc::now(),
+                    };
+                    let _ = state.message_client.store_message(payload).await;
+
+                    let display_name = customer.name.as_deref().unwrap_or(&customer_id);
+                    let _ = state
+                        .mattermost_client
+                        .post_message_with_override(&conv_id, &msg_text, None, None, Some(display_name), None)
+                        .await;
+                }
+            }
+        }
+    }
+
+    Ok(StatusCode::OK)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InstagramWebhookPayload {
+    pub object: String,
+    pub entry: Vec<InstagramWebhookEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InstagramWebhookEntry {
+    pub id: String,
+    pub time: i64,
+    pub messaging: Vec<InstagramWebhookMessaging>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InstagramWebhookMessaging {
+    pub sender: WebhookSender,
+    pub recipient: WebhookSender,
+    pub message: Option<InstagramWebhookMessage>,
+    pub postback: Option<WebhookPostback>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InstagramWebhookMessage {
+    pub mid: Option<String>,
+    pub text: Option<String>,
+    pub is_echo: Option<bool>,
+}
+
 pub async fn webhook_handler(
     State(state): State<AppState>,
     body: String,
@@ -493,6 +616,12 @@ pub struct WebhookReferral {
 #[derive(Debug, Deserialize)]
 pub struct WebhookSender {
     pub id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookPostback {
+    pub title: Option<String>,
+    pub payload: String,
 }
 
 #[derive(Debug, Deserialize)]

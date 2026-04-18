@@ -29,9 +29,15 @@ use axum::{
 
 use crate::config::Config;
 use crate::handlers::{
+<<<<<<< HEAD
     exchange_token, full_history_reimport, get_import_status, health_check,
     import_all_conversations, import_single_conversation, reimport_all_conversations,
     reimport_conversation, webhook_handler, webhook_verification,
+=======
+    exchange_token, get_import_status, health_check, import_all_conversations,
+    import_single_conversation, reimport_all_conversations, reimport_conversation, webhook_handler,
+    webhook_verification, instagram_webhook_handler, instagram_webhook_verification,
+>>>>>>> dev/instagram-integration
 };
 use crate::services::{CustomerServiceClient, MattermostClient, MessageServiceClient};
 use crate::storage::MinioStorage;
@@ -58,6 +64,10 @@ pub fn create_app(state: AppState) -> Router {
         .route(
             "/webhook/facebook",
             get(webhook_verification).post(webhook_handler),
+        )
+        .route(
+            "/webhook/instagram",
+            get(instagram_webhook_verification).post(instagram_webhook_handler),
         )
         .route("/api/import/conversations", post(import_all_conversations))
         .route(
