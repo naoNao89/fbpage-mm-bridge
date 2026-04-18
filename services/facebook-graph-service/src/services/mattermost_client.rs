@@ -169,6 +169,40 @@ impl MattermostClient {
             .insert(external_id.to_string())
     }
 
+    pub async fn mark_posted_persistent(
+        &self,
+        external_id: &str,
+        conversation_id: &str,
+        mattermost_post_id: &str,
+    ) -> bool {
+        if let Some(pool) = &self.pool {
+            match crate::db::mark_message_posted(
+                pool,
+                external_id,
+                conversation_id,
+                mattermost_post_id,
+            )
+            .await
+            {
+                Ok(true) => {
+                    self.mark_posted(external_id);
+                    tracing::debug!(
+                        "Persisted mark_posted to DB: {} in conversation {}",
+                        external_id,
+                        conversation_id
+                    );
+                    return true;
+                }
+                Ok(false) => return false,
+                Err(e) => tracing::warn!("Failed to persist mark_posted to DB: {e}"),
+            }
+        } else {
+            tracing::warn!("MattermostClient pool is None, using in-memory only");
+        }
+        self.mark_posted(external_id);
+        true
+    }
+
     /// Ensure a valid token is available
     pub async fn ensure_token(&self) -> Result<()> {
         let needs_login = self.token.lock().expect("token lock poisoned").is_none();
@@ -712,6 +746,33 @@ impl MattermostClient {
         bot_token: &str,
         file_ids: &[String],
     ) -> Result<String> {
+        self.post_message_as_bot_with_files_and_override(
+            channel_id,
+            message,
+            root_id,
+            create_at,
+            bot_user_id,
+            bot_token,
+            file_ids,
+            None,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn post_message_as_bot_with_files_and_override(
+        &self,
+        channel_id: &str,
+        message: &str,
+        root_id: Option<&str>,
+        create_at: Option<i64>,
+        bot_user_id: &str,
+        bot_token: &str,
+        file_ids: &[String],
+        override_username: Option<&str>,
+        override_icon_url: Option<&str>,
+    ) -> Result<String> {
         if message.trim().is_empty() && file_ids.is_empty() {
             return Err(anyhow::anyhow!(
                 "Skipping empty bot message post with no files"
@@ -745,6 +806,25 @@ impl MattermostClient {
                         .collect(),
                 ),
             );
+        }
+        if override_username.is_some() || override_icon_url.is_some() {
+            let mut props = serde_json::json!({});
+            if let Some(uname) = override_username {
+                props.as_object_mut().unwrap().insert(
+                    "override_username".to_string(),
+                    serde_json::Value::String(uname.to_string()),
+                );
+            }
+            if let Some(icon) = override_icon_url {
+                props.as_object_mut().unwrap().insert(
+                    "override_icon".to_string(),
+                    serde_json::Value::String(icon.to_string()),
+                );
+            }
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("props".to_string(), props);
         }
 
         let resp = self
@@ -863,6 +943,29 @@ impl MattermostClient {
     pub async fn get_root_id(&self, conversation_id: &str) -> Result<Option<String>> {
         let guard = self.root_cache.lock().unwrap();
         Ok(guard.get(conversation_id).cloned())
+    }
+
+    pub fn clear_root_id(&self, conversation_id: &str) {
+        self.root_cache
+            .lock()
+            .expect("root_cache poisoned")
+            .remove(conversation_id);
+    }
+
+    pub fn clear_root_id_db(&self, pool: &sqlx::PgPool, conversation_id: &str) {
+        let cid = conversation_id.to_string();
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            if let Err(e) = sqlx::query(
+                "DELETE FROM mattermost_cache WHERE key_type = 'root' AND conversation_id = $1",
+            )
+            .bind(&cid)
+            .execute(&pool)
+            .await
+            {
+                tracing::warn!("Failed to clear root_id from DB for {cid}: {e}");
+            }
+        });
     }
 
     /// Fetch all posts in a channel created after the given Unix millisecond timestamp.
@@ -993,13 +1096,16 @@ impl MattermostClient {
         let auth = self.get_auth_header().await?;
         let team_id = self.get_team_id().await?;
 
-        let slug = self.generate_bot_username(display_name);
+        // Use PSID prefix to ensure unique usernames, preventing collisions when
+        // multiple customers have the same display name
+        let slug = self.generate_bot_username_with_psid(platform_user_id, display_name);
+        let description = format!("FB Page customer PSID: {platform_user_id}");
 
         let create_url = format!("{}/api/v4/bots", self.base_url);
         let payload = serde_json::json!({
             "username": slug,
             "display_name": display_name,
-            "description": "FB Page customer"
+            "description": description
         });
 
         let resp = self
@@ -1080,10 +1186,6 @@ impl MattermostClient {
         Ok((bot_user_id, bot_token))
     }
 
-    fn generate_bot_username(&self, display_name: &str) -> String {
-        Self::generate_bot_username_from(display_name)
-    }
-
     pub fn generate_bot_username_from(display_name: &str) -> String {
         let ascii: String = display_name
             .to_lowercase()
@@ -1127,6 +1229,26 @@ impl MattermostClient {
             return slug[..max_len].to_string();
         }
         slug
+    }
+
+    pub fn generate_bot_username_with_psid(
+        &self,
+        platform_user_id: &str,
+        display_name: &str,
+    ) -> String {
+        let name_slug = Self::generate_bot_username_from(display_name);
+        let psid_prefix = if platform_user_id.len() >= 8 {
+            platform_user_id[..8].to_lowercase()
+        } else {
+            platform_user_id.to_lowercase()
+        };
+        let combined = format!("{psid_prefix}-{name_slug}");
+        let max_len = 22;
+        if combined.len() > max_len {
+            combined[..max_len].to_string()
+        } else {
+            combined
+        }
     }
 
     async fn resolve_bot_user_by_username(&self, username: &str) -> Result<String> {
@@ -1228,6 +1350,31 @@ impl MattermostClient {
         bot_user_id: &str,
         bot_token: &str,
     ) -> Result<String> {
+        self.post_message_as_bot_with_override(
+            channel_id,
+            message,
+            root_id,
+            create_at,
+            bot_user_id,
+            bot_token,
+            None,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn post_message_as_bot_with_override(
+        &self,
+        channel_id: &str,
+        message: &str,
+        root_id: Option<&str>,
+        create_at: Option<i64>,
+        bot_user_id: &str,
+        bot_token: &str,
+        override_username: Option<&str>,
+        override_icon_url: Option<&str>,
+    ) -> Result<String> {
         if message.trim().is_empty() {
             return Err(anyhow::anyhow!("Skipping empty message post"));
         }
@@ -1258,6 +1405,25 @@ impl MattermostClient {
                 "create_at".to_string(),
                 serde_json::Value::Number(ts.into()),
             );
+        }
+        if override_username.is_some() || override_icon_url.is_some() {
+            let mut props = serde_json::json!({});
+            if let Some(uname) = override_username {
+                props.as_object_mut().unwrap().insert(
+                    "override_username".to_string(),
+                    serde_json::Value::String(uname.to_string()),
+                );
+            }
+            if let Some(icon) = override_icon_url {
+                props.as_object_mut().unwrap().insert(
+                    "override_icon".to_string(),
+                    serde_json::Value::String(icon.to_string()),
+                );
+            }
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("props".to_string(), props);
         }
 
         let resp = self
@@ -1308,6 +1474,14 @@ impl MattermostClient {
             return Err(anyhow::anyhow!(
                 "Bot post failed after retry {retry_status}: {retry_body}"
             ));
+        }
+
+        if status.as_u16() == 400 && body.contains("root_id.app_error") {
+            tracing::warn!(
+                "Bot post got Invalid RootId, clearing root cache for channel {channel_id}"
+            );
+            self.clear_root_id(channel_id);
+            return Err(anyhow::anyhow!("Invalid RootId cleared for {channel_id}"));
         }
 
         Err(anyhow::anyhow!("Bot post failed {status}: {body}"))

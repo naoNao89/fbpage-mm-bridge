@@ -29,9 +29,9 @@ use axum::{
 
 use crate::config::Config;
 use crate::handlers::{
-    exchange_token, get_import_status, health_check, import_all_conversations,
-    import_single_conversation, reimport_all_conversations, reimport_conversation, webhook_handler,
-    webhook_verification,
+    exchange_token, full_history_reimport, get_import_status, health_check,
+    import_all_conversations, import_single_conversation, reimport_all_conversations,
+    reimport_conversation, webhook_handler, webhook_verification,
 };
 use crate::services::{CustomerServiceClient, MattermostClient, MessageServiceClient};
 use crate::storage::MinioStorage;
@@ -45,6 +45,10 @@ pub struct AppState {
     pub message_client: MessageServiceClient,
     pub mattermost_client: MattermostClient,
     pub minio: Option<MinioStorage>,
+    /// Cache: customer PSID → Facebook conversation ID (t_xxx format)
+    /// Used by webhook handler to resolve conversation_id without per-request Graph API calls.
+    pub conversation_id_cache:
+        std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
 }
 
 /// Create the application router
@@ -62,6 +66,7 @@ pub fn create_app(state: AppState) -> Router {
         )
         .route("/api/reimport/:id", post(reimport_conversation))
         .route("/api/reimport", post(reimport_all_conversations))
+        .route("/api/reimport/full", post(full_history_reimport))
         .route("/api/status", get(get_import_status))
         .route("/api/token/exchange", post(exchange_token))
         .with_state(state)

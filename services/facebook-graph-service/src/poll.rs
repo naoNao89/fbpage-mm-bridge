@@ -117,10 +117,8 @@ async fn poll_conversation_new_messages(
         }
     }
 
-    let ordered_msgs: Vec<&crate::models::GraphMessage> = incoming_msgs
-        .into_iter()
-        .chain(outgoing_msgs.into_iter())
-        .collect();
+    let ordered_msgs: Vec<&crate::models::GraphMessage> =
+        incoming_msgs.into_iter().chain(outgoing_msgs).collect();
 
     for msg in ordered_msgs {
         let is_from_page = msg.from.id == state.config.facebook_page_id;
@@ -142,6 +140,25 @@ async fn poll_conversation_new_messages(
                 continue;
             }
         };
+
+        // Pre-populate PSID→conversation_id cache so webhook handler can find it later
+        {
+            let cache = state.conversation_id_cache.read().await;
+            if !cache.contains_key(&cust_id) {
+                drop(cache);
+                let mut cache = state.conversation_id_cache.write().await;
+                if !cache.contains_key(&cust_id) {
+                    cache.insert(cust_id.clone(), conversation_id.to_string());
+                    let _ = crate::db::upsert_mm_cache(
+                        &state.pool,
+                        "conversation",
+                        &cust_id,
+                        conversation_id,
+                    )
+                    .await;
+                }
+            }
+        }
 
         let customer = match state
             .customer_client
@@ -167,7 +184,10 @@ async fn poll_conversation_new_messages(
 
         match state.message_client.store_message(message_payload).await {
             Ok(msg_resp) => {
-                if !mm.mark_posted(&msg.id) {
+                if !mm
+                    .mark_posted_persistent(&msg.id, conversation_id, &msg.id)
+                    .await
+                {
                     continue;
                 }
 
@@ -201,17 +221,19 @@ async fn poll_conversation_new_messages(
                             };
 
                             let result = if file_ids.is_empty() {
-                                mm.post_message_as_bot(
+                                mm.post_message_as_bot_with_override(
                                     &channel_id,
                                     &msg_text,
                                     msg_root,
                                     ts,
                                     &bot_uid,
                                     &bot_token,
+                                    Some(customer_name_str),
+                                    None,
                                 )
                                 .await
                             } else {
-                                mm.post_message_as_bot_with_files(
+                                mm.post_message_as_bot_with_files_and_override(
                                     &channel_id,
                                     &msg_text,
                                     msg_root,
@@ -219,6 +241,8 @@ async fn poll_conversation_new_messages(
                                     &bot_uid,
                                     &bot_token,
                                     &file_ids,
+                                    Some(customer_name_str),
+                                    None,
                                 )
                                 .await
                             };
@@ -231,6 +255,58 @@ async fn poll_conversation_new_messages(
                                 }
                                 Err(e) if e.to_string().contains("Duplicate post skipped") => {}
                                 Err(e) if e.to_string().contains("Skipping empty message") => {}
+                                Err(e) if e.to_string().contains("Invalid RootId cleared") => {
+                                    warn!(
+                                        "Bot post failed with Invalid RootId for {}, retrying without root: {e}",
+                                        conversation_id
+                                    );
+                                    let root = None;
+                                    let retry_result = if file_ids.is_empty() {
+                                        mm.post_message_as_bot_with_override(
+                                            &channel_id,
+                                            &msg_text,
+                                            root,
+                                            ts,
+                                            &bot_uid,
+                                            &bot_token,
+                                            Some(customer_name_str),
+                                            None,
+                                        )
+                                        .await
+                                    } else {
+                                        mm.post_message_as_bot_with_files_and_override(
+                                            &channel_id,
+                                            &msg_text,
+                                            root,
+                                            ts,
+                                            &bot_uid,
+                                            &bot_token,
+                                            &file_ids,
+                                            Some(customer_name_str),
+                                            None,
+                                        )
+                                        .await
+                                    };
+                                    match retry_result {
+                                        Ok(post_id) => {
+                                            mm.set_root_id(conversation_id, &post_id);
+                                            posted += 1;
+                                        }
+                                        Err(e) => {
+                                            warn!(
+                                                "Retry bot post failed for {}: {}",
+                                                conversation_id, e
+                                            );
+                                            if let Ok(post_id) = mm
+                                                .post_message(&channel_id, &msg_text, None, ts)
+                                                .await
+                                            {
+                                                mm.set_root_id(conversation_id, &post_id);
+                                                posted += 1;
+                                            }
+                                        }
+                                    }
+                                }
                                 Err(e) => {
                                     warn!(
                                         "Bot post failed for {}, falling back: {e}",

@@ -7,7 +7,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -71,61 +71,103 @@ pub async fn webhook_handler(
 
     for entry in payload.entry {
         debug!("Processing entry: {}", entry.id);
-        for message in entry.messaging {
-            let sender_id = match &message.sender.id {
+        for messaging in entry.messaging {
+            let sender_id = match &messaging.sender.id {
                 Some(id) => id,
                 None => continue,
             };
-            let recipient_id = match &message.recipient.id {
+            let recipient_id = match &messaging.recipient.id {
                 Some(id) => id,
                 None => continue,
             };
-            let msg = match &message.message {
-                Some(m) => m,
-                None => continue,
-            };
 
-            let is_echo = msg.is_echo.unwrap_or(false);
-
-            // For echo messages (page's own replies), the customer is the recipient.
-            // For incoming messages (from user), the customer is the sender.
-            let (customer_id, conversation_id) = if is_echo {
-                (recipient_id, recipient_id)
-            } else {
-                (sender_id, recipient_id)
-            };
-
-            let direction = if is_echo { "outgoing" } else { "incoming" };
-
-            let text = msg
-                .text
-                .clone()
-                .or_else(|| msg.quick_reply.as_ref().map(|q| q.payload.clone()));
-
-            let has_attachments = msg
-                .attachments
+            let is_echo = messaging
+                .message
                 .as_ref()
-                .map(|a| !a.is_empty())
+                .and_then(|m| m.is_echo)
                 .unwrap_or(false);
 
-            let final_text = if let Some(text) = text {
-                if has_attachments {
-                    let att_md = format_webhook_attachments(msg.attachments.as_deref());
-                    Some(if text.trim().is_empty() {
-                        att_md
-                    } else {
-                        format!("{text}\n{att_md}")
-                    })
-                } else {
-                    Some(text)
-                }
-            } else if has_attachments {
-                Some(format_webhook_attachments(msg.attachments.as_deref()))
+            // Customer PSID and conversation_id:
+            // - For incoming (customer→page): customer_id = sender (PSID), customer is the conversation partner
+            // - For echo (page→customer): customer_id = recipient (PSID), customer is still the conversation partner
+            // - For postback (customer clicked button): customer_id = sender (PSID)
+            // conversation_id should use the customer PSID consistently so that
+            // webhook-driven and poller/import paths land in the same Mattermost channel.
+            let (customer_id, direction) = if is_echo {
+                (recipient_id, "outgoing")
             } else {
-                None
+                (sender_id, "incoming")
             };
 
-            if let Some(text) = final_text {
+            // Resolve conversation_id from customer PSID via Graph API with cache
+            let conversation_id = match resolve_conversation_id(&state, customer_id).await {
+                Ok(cid) => cid,
+                Err(e) => {
+                    warn!(
+                        "Failed to resolve conversation_id for PSID {}, using PSID as fallback: {e}",
+                        customer_id
+                    );
+                    customer_id.to_string()
+                }
+            };
+
+            // Handle three event types: message, postback, delivery receipt
+            let text: Option<String>;
+            let external_id: Option<String>;
+
+            if let Some(ref postback) = messaging.postback {
+                let title = postback.title.as_deref().unwrap_or(&postback.payload);
+                let payload_text = if let Some(ref ref_data) = postback.referral {
+                    format!(
+                        "[Button: {title}] (payload: {}, ref: {}, source: {})",
+                        postback.payload,
+                        ref_data.ref_.as_deref().unwrap_or(""),
+                        ref_data.source.as_deref().unwrap_or("")
+                    )
+                } else {
+                    format!("[Button: {title}] (payload: {})", postback.payload)
+                };
+                text = Some(payload_text);
+                external_id = Some(format!(
+                    "pb_{customer_id}_{}",
+                    chrono::Utc::now().timestamp_millis()
+                ));
+            } else if let Some(ref msg) = messaging.message {
+                let msg_text = msg
+                    .text
+                    .clone()
+                    .or_else(|| msg.quick_reply.as_ref().map(|q| q.payload.clone()));
+
+                let has_attachments = msg
+                    .attachments
+                    .as_ref()
+                    .map(|a| !a.is_empty())
+                    .unwrap_or(false);
+
+                let final_text = if let Some(t) = msg_text {
+                    if has_attachments {
+                        let att_md = format_webhook_attachments(msg.attachments.as_deref());
+                        Some(if t.trim().is_empty() {
+                            att_md
+                        } else {
+                            format!("{t}\n{att_md}")
+                        })
+                    } else {
+                        Some(t)
+                    }
+                } else if has_attachments {
+                    Some(format_webhook_attachments(msg.attachments.as_deref()))
+                } else {
+                    None
+                };
+                text = final_text;
+                external_id = msg.mid.clone();
+            } else {
+                // Delivery receipt or other non-content event — skip
+                continue;
+            }
+
+            if let Some(msg_text) = text {
                 if let Ok(customer) = state
                     .customer_client
                     .get_or_create_customer(customer_id, "facebook", None)
@@ -136,24 +178,24 @@ pub async fn webhook_handler(
                         customer_id: customer.id,
                         platform: "facebook".to_string(),
                         direction: direction.to_string(),
-                        message_text: Some(text.clone()),
-                        external_id: msg.mid.clone(),
+                        message_text: Some(msg_text.clone()),
+                        external_id: external_id.clone(),
                         created_at: chrono::Utc::now(),
                     };
                     let _ = state.message_client.store_message(payload).await;
 
-                    if let Some(ref mid) = msg.mid {
-                        if !state.mattermost_client.mark_posted(mid) {
+                    if let Some(ref eid) = external_id {
+                        if !state.mattermost_client.mark_posted(eid) {
                             continue;
                         }
                     }
 
-                    let display_name = customer.name.as_deref().unwrap_or(conversation_id);
+                    let display_name = customer.name.as_deref().unwrap_or(&conversation_id);
                     let _ = post_to_mattermost(
                         &state,
-                        conversation_id,
-                        &text,
-                        msg.mid.as_deref(),
+                        &conversation_id,
+                        &msg_text,
+                        external_id.as_deref(),
                         display_name,
                         direction,
                         Some(customer_id),
@@ -208,13 +250,15 @@ async fn post_to_mattermost(
                             mm.get_root_id(conversation_id).await.ok().flatten()
                         };
                         match mm
-                            .post_message_as_bot(
+                            .post_message_as_bot_with_override(
                                 &channel_id,
                                 text,
                                 root.as_deref(),
                                 None,
                                 &bot_user_id,
                                 &bot_token,
+                                Some(display_name),
+                                None,
                             )
                             .await
                         {
@@ -274,6 +318,94 @@ async fn post_to_mattermost(
     Ok(())
 }
 
+/// Resolve a customer PSID to the Facebook Graph API conversation ID (t_xxx format).
+///
+/// Uses a two-level cache strategy:
+/// 1. In-memory HashMap (fastest, within single process lifetime)
+/// 2. Database `mattermost_cache` with kind="conversation" (survives restarts)
+/// 3. On cache miss, calls `GET /{page-id}/conversations?user_id={PSID}&fields=id`
+///
+/// This ensures webhook messages land in the same Mattermost channel as
+/// poller/import messages which already use the t_xxx conversation ID.
+async fn resolve_conversation_id(state: &AppState, psid: &str) -> Result<String, anyhow::Error> {
+    // Check in-memory cache first
+    {
+        let cache = state.conversation_id_cache.read().await;
+        if let Some(cached) = cache.get(psid) {
+            return Ok(cached.clone());
+        }
+    }
+
+    // Check database cache
+    if let Ok(Some(cid)) = db::load_single_mm_cache(&state.pool, "conversation", psid).await {
+        let mut cache = state.conversation_id_cache.write().await;
+        cache.insert(psid.to_string(), cid.clone());
+        return Ok(cid);
+    }
+
+    // Cache miss: resolve via Graph API
+    let client = reqwest::Client::new();
+    let page_id = &state.config.facebook_page_id;
+    let access_token = &state.config.facebook_page_access_token;
+    let url = format!(
+        "https://graph.facebook.com/v24.0/{page_id}/conversations?user_id={psid}&fields=id&access_token={access_token}&limit=1",
+    );
+
+    let resp = client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .context("Failed to call Graph API for conversation resolution")?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "Graph API conversation resolution failed {status}: {body}"
+        ));
+    }
+
+    #[derive(Deserialize)]
+    struct ConversationResponse {
+        data: Vec<ConversationEntry>,
+    }
+    #[derive(Deserialize)]
+    struct ConversationEntry {
+        id: String,
+    }
+
+    let conv_resp: ConversationResponse = resp
+        .json()
+        .await
+        .context("Failed to parse conversation resolution response")?;
+
+    let conversation_id = conv_resp
+        .data
+        .first()
+        .map(|c| c.id.clone())
+        .ok_or_else(|| anyhow::anyhow!("No conversation found for PSID {psid}"))?;
+
+    state
+        .conversation_id_cache
+        .write()
+        .await
+        .insert(psid.to_string(), conversation_id.clone());
+    if let Err(e) = db::upsert_mm_cache(&state.pool, "conversation", psid, &conversation_id).await {
+        warn!(
+            "Failed to persist conversation cache for PSID {}: {e}",
+            psid
+        );
+    }
+
+    info!(
+        "Resolved PSID {} → conversation_id {} via Graph API",
+        psid, conversation_id
+    );
+
+    Ok(conversation_id)
+}
+
 fn parse_webhook_entry(body: &str) -> Option<WebhookPayload> {
     serde_json::from_str(body).ok()
 }
@@ -328,6 +460,34 @@ pub struct WebhookMessaging {
     pub sender: WebhookSender,
     pub recipient: WebhookSender,
     pub message: Option<WebhookMessage>,
+    /// Facebook postback events (persistent menu buttons, Get Started, etc.)
+    /// These fire when a user clicks a button rather than typing a message.
+    pub postback: Option<WebhookPostback>,
+}
+
+/// A postback payload from Facebook Messenger.
+/// Triggered when users click persistent menu items, Get Started button,
+/// or any button with a payload (not a URL button).
+#[derive(Debug, Deserialize)]
+pub struct WebhookPostback {
+    /// The display title of the button the user clicked (e.g. "Menu của Bump")
+    pub title: Option<String>,
+    /// The developer-defined payload string (e.g. "MENU", "ADDRESS")
+    pub payload: String,
+    /// Referral data that may accompany the postback
+    pub referral: Option<WebhookReferral>,
+}
+
+/// Referral data within a postback event
+#[derive(Debug, Deserialize)]
+pub struct WebhookReferral {
+    /// The ref parameter (e.g. "MENU")
+    pub ref_: Option<String>,
+    /// The source of the referral (e.g. "SHORTLINK", "MESSENGER_CODE")
+    pub source: Option<String>,
+    /// The type of referral
+    #[serde(rename = "type")]
+    pub referral_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -698,6 +858,25 @@ pub async fn process_conversation(
             }
         };
 
+        // Pre-populate PSID→conversation_id cache so webhook handler can find it later
+        {
+            let cache = state.conversation_id_cache.read().await;
+            if !cache.contains_key(&cust_id) {
+                drop(cache);
+                let mut cache = state.conversation_id_cache.write().await;
+                if !cache.contains_key(&cust_id) {
+                    cache.insert(cust_id.clone(), conversation_id.to_string());
+                    let _ = crate::db::upsert_mm_cache(
+                        &state.pool,
+                        "conversation",
+                        &cust_id,
+                        conversation_id,
+                    )
+                    .await;
+                }
+            }
+        }
+
         // Get or create customer via Customer Service
         let customer = match state
             .customer_client
@@ -727,7 +906,11 @@ pub async fn process_conversation(
 
         match state.message_client.store_message(message_payload).await {
             Ok(msg_resp) => {
-                if !state.mattermost_client.mark_posted(&msg.id) {
+                if !state
+                    .mattermost_client
+                    .mark_posted_persistent(&msg.id, conversation_id, &msg.id)
+                    .await
+                {
                     continue;
                 }
                 messages_stored += 1;
@@ -773,17 +956,19 @@ pub async fn process_conversation(
                                     };
 
                                     let result = if file_ids.is_empty() {
-                                        mm.post_message_as_bot(
+                                        mm.post_message_as_bot_with_override(
                                             &channel_id,
                                             &final_text,
                                             root_id_slice,
                                             ts,
                                             &bot_uid,
                                             &bot_token,
+                                            Some(display_name),
+                                            None,
                                         )
                                         .await
                                     } else {
-                                        mm.post_message_as_bot_with_files(
+                                        mm.post_message_as_bot_with_files_and_override(
                                             &channel_id,
                                             &final_text,
                                             root_id_slice,
@@ -791,6 +976,8 @@ pub async fn process_conversation(
                                             &bot_uid,
                                             &bot_token,
                                             &file_ids,
+                                            Some(display_name),
+                                            None,
                                         )
                                         .await
                                     };
@@ -914,6 +1101,10 @@ pub async fn reimport_conversation(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    mm.clear_root_id(&conversation_id);
+    mm.clear_root_id_db(&state.pool, &conversation_id);
+    let _ = crate::db::clear_posted_messages(&state.pool, &conversation_id).await;
+
     // Delete all existing posts in the channel
     let auth = mm
         .get_auth_header()
@@ -1024,14 +1215,25 @@ pub async fn reimport_conversation(
             Ok((bot_uid, bot_token)) => {
                 let root = root_id.as_deref();
                 match mm
-                    .post_message_as_bot(&channel_id, text, root, None, &bot_uid, &bot_token)
+                    .post_message_as_bot_with_override(
+                        &channel_id,
+                        text,
+                        root,
+                        None,
+                        &bot_uid,
+                        &bot_token,
+                        Some(customer_name),
+                        None,
+                    )
                     .await
                 {
                     Ok(post_id) => {
                         if root_id.is_none() {
                             mm.set_root_id(&conversation_id, &post_id);
-                            root_id = Some(post_id);
+                            root_id = Some(post_id.clone());
                         }
+                        mm.mark_posted_persistent(&msg.id, &conversation_id, &post_id)
+                            .await;
                         posted += 1;
                     }
                     Err(e) => {
@@ -1040,8 +1242,10 @@ pub async fn reimport_conversation(
                         if let Ok(post_id) = mm.post_message(&channel_id, text, root, None).await {
                             if root_id.is_none() {
                                 mm.set_root_id(&conversation_id, &post_id);
-                                root_id = Some(post_id);
+                                root_id = Some(post_id.clone());
                             }
+                            mm.mark_posted_persistent(&msg.id, &conversation_id, &post_id)
+                                .await;
                             posted += 1;
                         }
                     }
@@ -1053,8 +1257,10 @@ pub async fn reimport_conversation(
                 if let Ok(post_id) = mm.post_message(&channel_id, text, root, None).await {
                     if root_id.is_none() {
                         mm.set_root_id(&conversation_id, &post_id);
-                        root_id = Some(post_id);
+                        root_id = Some(post_id.clone());
                     }
+                    mm.mark_posted_persistent(&msg.id, &conversation_id, &post_id)
+                        .await;
                     posted += 1;
                 }
             }
@@ -1074,8 +1280,10 @@ pub async fn reimport_conversation(
         if let Ok(post_id) = mm.post_message(&channel_id, text, root, None).await {
             if root_id.is_none() {
                 mm.set_root_id(&conversation_id, &post_id);
-                root_id = Some(post_id);
+                root_id = Some(post_id.clone());
             }
+            mm.mark_posted_persistent(&msg.id, &conversation_id, &post_id)
+                .await;
             posted += 1;
         }
     }
@@ -1156,6 +1364,10 @@ async fn reimport_single_conversation(
     channel_id: &str,
 ) -> Result<ReimportResult, anyhow::Error> {
     let mm = &state.mattermost_client;
+
+    mm.clear_root_id(conversation_id);
+    mm.clear_root_id_db(&state.pool, conversation_id);
+    let _ = crate::db::clear_posted_messages(&state.pool, conversation_id).await;
 
     let auth = mm.get_auth_header().await?;
     let client = reqwest::Client::new();
@@ -1277,17 +1489,19 @@ async fn reimport_single_conversation(
 
                 let root = root_id.as_deref();
                 let result = if file_ids.is_empty() {
-                    mm.post_message_as_bot(
+                    mm.post_message_as_bot_with_override(
                         channel_id,
                         &final_text,
                         root,
                         None,
                         &bot_uid,
                         &bot_token,
+                        Some(customer_name),
+                        None,
                     )
                     .await
                 } else {
-                    mm.post_message_as_bot_with_files(
+                    mm.post_message_as_bot_with_files_and_override(
                         channel_id,
                         &final_text,
                         root,
@@ -1295,6 +1509,8 @@ async fn reimport_single_conversation(
                         &bot_uid,
                         &bot_token,
                         &file_ids,
+                        Some(customer_name),
+                        None,
                     )
                     .await
                 };
@@ -1302,9 +1518,14 @@ async fn reimport_single_conversation(
                     Ok(post_id) => {
                         if root_id.is_none() {
                             mm.set_root_id(conversation_id, &post_id);
-                            root_id = Some(post_id);
+                            root_id = Some(post_id.clone());
                         }
-                        posted += 1;
+                        if mm
+                            .mark_posted_persistent(&msg.id, conversation_id, &post_id)
+                            .await
+                        {
+                            posted += 1;
+                        }
                     }
                     Err(e) => {
                         tracing::warn!("Reimport: bot post failed for {}: {}", conversation_id, e);
@@ -1314,9 +1535,14 @@ async fn reimport_single_conversation(
                         {
                             if root_id.is_none() {
                                 mm.set_root_id(conversation_id, &post_id);
-                                root_id = Some(post_id);
+                                root_id = Some(post_id.clone());
                             }
-                            posted += 1;
+                            if mm
+                                .mark_posted_persistent(&msg.id, conversation_id, &post_id)
+                                .await
+                            {
+                                posted += 1;
+                            }
                         }
                     }
                 }
@@ -1327,9 +1553,14 @@ async fn reimport_single_conversation(
                 if let Ok(post_id) = mm.post_message(channel_id, text, root, None).await {
                     if root_id.is_none() {
                         mm.set_root_id(conversation_id, &post_id);
-                        root_id = Some(post_id);
+                        root_id = Some(post_id.clone());
                     }
-                    posted += 1;
+                    if mm
+                        .mark_posted_persistent(&msg.id, conversation_id, &post_id)
+                        .await
+                    {
+                        posted += 1;
+                    }
                 }
             }
         }
@@ -1371,9 +1602,14 @@ async fn reimport_single_conversation(
         if let Ok(post_id) = result {
             if root_id.is_none() {
                 mm.set_root_id(conversation_id, &post_id);
-                root_id = Some(post_id);
+                root_id = Some(post_id.clone());
             }
-            posted += 1;
+            if mm
+                .mark_posted_persistent(&msg.id, conversation_id, &post_id)
+                .await
+            {
+                posted += 1;
+            }
         }
     }
 
@@ -1382,4 +1618,361 @@ async fn reimport_single_conversation(
         messages_fetched: total,
         messages_posted: posted,
     })
+}
+
+pub async fn full_history_reimport(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    info!("Starting full history reimport from Facebook Graph API");
+
+    // Spawn background task to avoid HTTP timeout
+    tokio::spawn(async move {
+        let result = full_history_reimport_task(&state).await;
+        match result {
+            Ok(summary) => {
+                info!(
+                    "Full history reimport complete: {} conversations processed, {} posts deleted, {} messages fetched, {} messages posted, {} errors",
+                    summary.conversations_processed,
+                    summary.posts_deleted,
+                    summary.messages_fetched,
+                    summary.messages_posted,
+                    summary.errors
+                );
+            }
+            Err(e) => {
+                error!("Full history reimport failed: {}", e);
+            }
+        }
+    });
+
+    Ok(Json(serde_json::json!({
+        "status": "started",
+        "message": "Full history reimport running in background. Check logs for progress."
+    })))
+}
+
+struct FullHistorySummary {
+    conversations_processed: u32,
+    posts_deleted: u32,
+    messages_fetched: usize,
+    messages_posted: u32,
+    errors: u32,
+}
+
+async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySummary, anyhow::Error> {
+    let mm = &state.mattermost_client;
+    let team_id = mm.get_team_id().await?;
+    let start_time = Instant::now();
+    let max_duration = Duration::from_secs(3600 * 2); // 2 hour max
+
+    let conversations = graph_api::get_conversations(&state.pool, &state.config).await?;
+    let total_conversations = conversations.len();
+    info!(
+        "Full history reimport: found {} total conversations on Facebook",
+        total_conversations
+    );
+
+    let mut summary = FullHistorySummary {
+        conversations_processed: 0,
+        posts_deleted: 0,
+        messages_fetched: 0,
+        messages_posted: 0,
+        errors: 0,
+    };
+
+    for conv in &conversations {
+        // Check timeout - stop after 2 hours to avoid blocking forever
+        if start_time.elapsed() > max_duration {
+            warn!(
+                "Full history reimport timed out after 2 hours: {} conversations processed, {} messages posted",
+                summary.conversations_processed,
+                summary.messages_posted
+            );
+            break;
+        }
+
+        let conv_id = &conv.id;
+
+        if !conv_id.starts_with("t_") {
+            continue;
+        }
+
+        let messages = match graph_api::get_conversation_messages(
+            &state.pool,
+            conv_id,
+            &state.config.facebook_page_access_token,
+        )
+        .await
+        {
+            Ok(msgs) => msgs,
+            Err(e) => {
+                warn!(
+                    "Full history reimport: failed to fetch messages for {}: {}",
+                    conv_id, e
+                );
+                summary.errors += 1;
+                continue;
+            }
+        };
+
+        if messages.is_empty() {
+            continue;
+        }
+
+        summary.messages_fetched += messages.len();
+
+        let mut messages_sorted = messages;
+        messages_sorted.sort_by_key(|m| m.created_time);
+
+        let display_name = messages_sorted
+            .iter()
+            .find_map(|msg| {
+                if msg.from.id != state.config.facebook_page_id {
+                    Some(msg.from.name.clone())
+                } else {
+                    msg.to.data.first().map(|u| u.name.clone())
+                }
+            })
+            .unwrap_or_else(|| conv_id.clone());
+
+        let channel_id = match mm
+            .get_or_create_channel(&team_id, conv_id, &display_name)
+            .await
+        {
+            Ok(cid) => cid,
+            Err(e) => {
+                warn!(
+                    "Full history reimport: failed to create channel for {}: {}",
+                    conv_id, e
+                );
+                summary.errors += 1;
+                continue;
+            }
+        };
+
+        let _ = mm
+            .maybe_update_display_name(&channel_id, conv_id, &display_name)
+            .await;
+
+        mm.clear_root_id(conv_id);
+        mm.clear_root_id_db(&state.pool, conv_id);
+        let _ = crate::db::clear_posted_messages(&state.pool, conv_id).await;
+
+        let auth = mm.get_auth_header().await?;
+        let client = reqwest::Client::new();
+        let base = state.config.mattermost_url.trim_end_matches('/');
+        let mut deleted_this_channel = 0u32;
+        let mut page = 0u32;
+        loop {
+            let url = format!("{base}/api/v4/channels/{channel_id}/posts?per_page=200&page={page}");
+            let resp = match client
+                .get(&url)
+                .header("Authorization", format!("Bearer {auth}"))
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(_) => break,
+            };
+            if !resp.status().is_success() {
+                break;
+            }
+            let data: serde_json::Value = match resp.json().await {
+                Ok(d) => d,
+                Err(_) => break,
+            };
+            let posts = match data.get("posts").and_then(|p| p.as_object()) {
+                Some(p) => p,
+                None => break,
+            };
+            if posts.is_empty() {
+                break;
+            }
+            for (_, post) in posts {
+                if let Some(pid) = post.get("id").and_then(|i| i.as_str()) {
+                    let del_url = format!("{base}/api/v4/posts/{pid}");
+                    let _ = client
+                        .delete(&del_url)
+                        .header("Authorization", format!("Bearer {auth}"))
+                        .send()
+                        .await;
+                    deleted_this_channel += 1;
+                }
+            }
+            page += 1;
+        }
+        if deleted_this_channel > 0 {
+            info!(
+                "Full history reimport: deleted {} posts from channel {}",
+                deleted_this_channel, conv_id
+            );
+            summary.posts_deleted += deleted_this_channel;
+        }
+
+        {
+            let mut cache = state.conversation_id_cache.write().await;
+            for msg in &messages_sorted {
+                if msg.from.id != state.config.facebook_page_id {
+                    cache.insert(msg.from.id.clone(), conv_id.clone());
+                }
+            }
+        }
+
+        let mut root_id: Option<String> = None;
+
+        for msg in &messages_sorted {
+            if msg.from.id == state.config.facebook_page_id {
+                continue;
+            }
+            let text = msg.message.as_deref().unwrap_or("");
+            let attachments = crate::media::extract_attachments_from_graph(msg);
+            if text.trim().is_empty() && attachments.is_empty() {
+                continue;
+            }
+            let customer_name = &msg.from.name;
+            let cust_id = &msg.from.id;
+
+            let bot_result = mm
+                .get_or_create_customer_bot(cust_id, customer_name, &channel_id)
+                .await;
+
+            let (bot_uid, bot_token) = match bot_result {
+                Ok((uid, tok)) => (uid, tok),
+                Err(e) => {
+                    warn!(
+                        "Full history reimport: bot creation failed for {}: {}",
+                        cust_id, e
+                    );
+                    continue;
+                }
+            };
+
+            let (final_text, file_ids) = if !attachments.is_empty() {
+                crate::media::process_attachments_for_post(
+                    state,
+                    mm,
+                    &channel_id,
+                    text,
+                    &attachments,
+                    &msg.id,
+                    None,
+                    Some(&bot_token),
+                )
+                .await
+            } else {
+                (text.to_string(), Vec::new())
+            };
+
+            let root = root_id.as_deref();
+            let msg_ts = Some(msg.created_time.timestamp_millis());
+            let post_result = if file_ids.is_empty() {
+                mm.post_message_as_bot_with_override(
+                    &channel_id,
+                    &final_text,
+                    root,
+                    msg_ts,
+                    &bot_uid,
+                    &bot_token,
+                    Some(customer_name),
+                    None,
+                )
+                .await
+            } else {
+                mm.post_message_as_bot_with_files_and_override(
+                    &channel_id,
+                    &final_text,
+                    root,
+                    msg_ts,
+                    &bot_uid,
+                    &bot_token,
+                    &file_ids,
+                    Some(customer_name),
+                    None,
+                )
+                .await
+            };
+
+            match post_result {
+                Ok(post_id) => {
+                    if root_id.is_none() {
+                        mm.set_root_id(conv_id, &post_id);
+                        root_id = Some(post_id.clone());
+                    }
+                    if mm.mark_posted_persistent(&msg.id, conv_id, &post_id).await {
+                        summary.messages_posted += 1;
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Full history reimport: bot post failed for {}: {}",
+                        conv_id, e
+                    );
+                }
+            }
+        }
+
+        for msg in &messages_sorted {
+            if msg.from.id != state.config.facebook_page_id {
+                continue;
+            }
+            let text = msg.message.as_deref().unwrap_or("");
+            let attachments = crate::media::extract_attachments_from_graph(msg);
+            if text.trim().is_empty() && attachments.is_empty() {
+                continue;
+            }
+
+            let (final_text, file_ids) = if !attachments.is_empty() {
+                crate::media::process_attachments_for_post(
+                    state,
+                    mm,
+                    &channel_id,
+                    text,
+                    &attachments,
+                    &msg.id,
+                    None,
+                    None,
+                )
+                .await
+            } else {
+                (text.to_string(), Vec::new())
+            };
+
+            let root = root_id.as_deref();
+            let msg_ts = Some(msg.created_time.timestamp_millis());
+            let post_result = if file_ids.is_empty() {
+                mm.post_message(&channel_id, &final_text, root, msg_ts)
+                    .await
+            } else {
+                mm.post_message_with_files(&channel_id, &final_text, root, msg_ts, &file_ids)
+                    .await
+            };
+
+            if let Ok(post_id) = post_result {
+                if root_id.is_none() {
+                    mm.set_root_id(conv_id, &post_id);
+                    root_id = Some(post_id.clone());
+                }
+                if mm.mark_posted_persistent(&msg.id, conv_id, &post_id).await {
+                    summary.messages_posted += 1;
+                }
+            }
+        }
+
+        summary.conversations_processed += 1;
+
+        // Log progress every 100 conversations
+        if summary.conversations_processed.is_multiple_of(100) {
+            info!(
+                "Full history reimport progress: {}/{} conversations, {} posts deleted, {} messages posted",
+                summary.conversations_processed,
+                total_conversations,
+                summary.posts_deleted,
+                summary.messages_posted
+            );
+        }
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+
+    Ok(summary)
 }
