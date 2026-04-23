@@ -18,6 +18,7 @@ use crate::config::Config;
 use crate::db;
 use crate::models::{
     Conversation, ConversationsResponse, FacebookRateLimitInfo, GraphMessage, MessagesResponse,
+    UserPictureResponse,
 };
 
 /// Facebook Graph API base URL
@@ -87,6 +88,13 @@ fn build_conversations_url(page_id: &str, access_token: &str) -> String {
 fn build_messages_url(conversation_id: &str, access_token: &str) -> String {
     format!(
         "{GRAPH_API_BASE}/{conversation_id}/messages?fields=id,created_time,from,message,to,attachments{{id,name,mime_type,size,image_data{{url}},video_data{{url}},file_url}}&access_token={access_token}&limit=100"
+    )
+}
+
+/// Build URL for fetching user profile picture
+fn build_picture_url(user_id: &str, access_token: &str, width: i32, height: i32) -> String {
+    format!(
+        "{GRAPH_API_BASE}/{user_id}/picture?redirect=false&width={width}&height={height}&access_token={access_token}"
     )
 }
 
@@ -579,6 +587,39 @@ pub async fn debug_token(access_token: &str, app_id: &str, app_secret: &str) -> 
     detect_token_type(access_token, app_id, app_secret).await
 }
 
+/// Fetch a user's profile picture URL from Facebook Graph API
+pub async fn get_user_picture(
+    user_id: &str,
+    access_token: &str,
+    width: i32,
+    height: i32,
+) -> Result<String> {
+    let client = Client::new();
+    let url = build_picture_url(user_id, access_token, width, height);
+
+    let response = client
+        .get(&url)
+        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .send()
+        .await
+        .context("Failed to fetch user picture")?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await?;
+        return Err(anyhow::anyhow!(
+            "Graph API error for user picture ({user_id}): {status} - {error_text}"
+        ));
+    }
+
+    let picture_response: UserPictureResponse = response
+        .json()
+        .await
+        .context("Failed to parse picture response")?;
+
+    Ok(picture_response.data.url)
+}
+
 /// Exchange a short-lived user access token for a long-lived token
 ///
 /// This uses the Facebook OAuth endpoint to exchange a short-lived token
@@ -776,5 +817,15 @@ mod tests {
         assert!(url.contains("conv_789/messages"));
         assert!(url.contains("access_token=test_token"));
         assert!(url.contains("fields=id,created_time,from,message,to"));
+    }
+
+    #[test]
+    fn test_build_picture_url() {
+        let url = build_picture_url("user_123", "token", 200, 200);
+        assert!(url.contains("user_123/picture"));
+        assert!(url.contains("redirect=false"));
+        assert!(url.contains("width=200"));
+        assert!(url.contains("height=200"));
+        assert!(url.contains("access_token=token"));
     }
 }
