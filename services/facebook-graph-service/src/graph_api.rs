@@ -336,10 +336,13 @@ pub async fn get_ig_recent_conversations(
 
     let client = Client::new();
     let access_token = &config.facebook_page_access_token;
+    let page_id = &config.facebook_page_id;
 
     let mut recent = Vec::new();
+    // Use page conversations endpoint with platform=instagram filter
+    // This works with Page access token, no separate IG API permissions needed
     let mut next_url = Some(format!(
-        "{GRAPH_API_BASE}/{ig_user_id}/conversations?fields=id,updated_time,message_count&access_token={access_token}&limit=25"
+        "{GRAPH_API_BASE}/{page_id}/conversations?fields=id,updated_time,message_count&platform=instagram&access_token={access_token}&limit=25"
     ));
     let mut page = 0;
 
