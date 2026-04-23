@@ -329,6 +329,8 @@ jobs:
           MATTERMOST_PASSWORD: ${{ secrets.MM_ADMIN_PASSWORD }}
           WEBHOOK_DOMAIN: ${{ secrets.WEBHOOK_DOMAIN }}
           FACEBOOK_WEBHOOK_VERIFY_TOKEN: ${{ secrets.FACEBOOK_WEBHOOK_VERIFY_TOKEN }}
+          INSTAGRAM_IG_USER_ID: ${{ secrets.INSTAGRAM_IG_USER_ID }}
+          INSTAGRAM_WEBHOOK_VERIFY_TOKEN: ${{ secrets.INSTAGRAM_WEBHOOK_VERIFY_TOKEN }}
           SSL_EMAIL: ${{ secrets.SSL_EMAIL }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
@@ -355,6 +357,8 @@ jobs:
           export MATTERMOST_PASSWORD="${MATTERMOST_PASSWORD}"
           export WEBHOOK_DOMAIN="${WEBHOOK_DOMAIN}"
           export FACEBOOK_WEBHOOK_VERIFY_TOKEN="${FACEBOOK_WEBHOOK_VERIFY_TOKEN}"
+          export INSTAGRAM_IG_USER_ID="${INSTAGRAM_IG_USER_ID}"
+          export INSTAGRAM_WEBHOOK_VERIFY_TOKEN="${INSTAGRAM_WEBHOOK_VERIFY_TOKEN}"
           export SSL_EMAIL="${SSL_EMAIL}"
           export REPO="${REPO}"
           export BRANCH="${BRANCH}"
