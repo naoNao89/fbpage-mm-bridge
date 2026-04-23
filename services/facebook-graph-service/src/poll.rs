@@ -28,21 +28,27 @@ async fn poll_recent_conversations(
     state: &AppState,
     since: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<usize> {
-    let conversations = crate::graph_api::get_recent_conversations(&state.config, since).await?;
+    let fb_conversations = crate::graph_api::get_recent_conversations(&state.config, since).await?;
+    let ig_conversations = crate::graph_api::get_ig_recent_conversations(&state.config, since).await?;
 
-    if conversations.is_empty() {
+    let all_conversations: Vec<_> = fb_conversations
+        .into_iter()
+        .chain(ig_conversations.into_iter())
+        .collect();
+
+    if all_conversations.is_empty() {
         return Ok(0);
     }
 
     info!(
         "Poller: {} conversations updated since {}",
-        conversations.len(),
+        all_conversations.len(),
         since
     );
 
     let mut total_posted = 0;
 
-    for conv in &conversations {
+    for conv in &all_conversations {
         match poll_conversation_new_messages(state, &conv.id, since).await {
             Ok(count) => {
                 if count > 0 {
