@@ -2326,10 +2326,27 @@ async fn sync_conversation(
         let root = root_id.as_deref();
         let msg_ts = Some(msg.created_time.timestamp_millis());
 
-        match mm
-            .post_message_as_bot_with_override(
+        let attachments = crate::media::extract_attachments_from_graph(msg);
+        let (msg_text, file_ids) = if !attachments.is_empty() {
+            crate::media::process_attachments_for_post(
+                state,
+                mm,
                 &channel_id,
                 text,
+                &attachments,
+                &msg.id,
+                None,
+                Some(&bot_token),
+            )
+            .await
+        } else {
+            (text.to_string(), Vec::new())
+        };
+
+        match if file_ids.is_empty() {
+            mm.post_message_as_bot_with_override(
+                &channel_id,
+                &msg_text,
                 root,
                 msg_ts,
                 &bot_uid,
@@ -2338,7 +2355,20 @@ async fn sync_conversation(
                 None,
             )
             .await
-        {
+        } else {
+            mm.post_message_as_bot_with_files_and_override(
+                &channel_id,
+                &msg_text,
+                root,
+                msg_ts,
+                &bot_uid,
+                &bot_token,
+                &file_ids,
+                Some(customer_name),
+                None,
+            )
+            .await
+        } {
             Ok(post_id) => {
                 if root_id.is_none() {
                     mm.set_root_id(conversation_id, &post_id);
