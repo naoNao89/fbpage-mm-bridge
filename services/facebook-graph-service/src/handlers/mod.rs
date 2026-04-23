@@ -2435,7 +2435,22 @@ async fn sync_conversation(
                 posted += 1;
             }
             Err(e) => {
-                tracing::warn!("Sync: bot post failed for {}: {}", conversation_id, e);
+                tracing::warn!("Sync: bot post failed for {}, falling back to admin: {}", conversation_id, e);
+                let fallback_result = mm.post_message(&channel_id, &msg_text, root, msg_ts).await;
+                match fallback_result {
+                    Ok(post_id) => {
+                        if root_id.is_none() {
+                            mm.set_root_id(conversation_id, &post_id);
+                            root_id = Some(post_id);
+                        }
+                        mm.mark_posted(&msg.id);
+                        posted += 1;
+                    }
+                    Err(e2) => {
+                        tracing::warn!("Sync: fallback to admin failed for {}: {}", conversation_id, e2);
+                        mm.mark_posted(&msg.id);
+                    }
+                }
             }
         }
     }
