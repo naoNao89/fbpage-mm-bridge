@@ -110,6 +110,14 @@ impl MattermostClient {
             }
             Err(e) => tracing::warn!("Failed to load root cache from database: {e}"),
         }
+        match crate::db::load_posted_message_ids(&pool).await {
+            Ok(posted) => {
+                let mut posted_ids = self.posted_ids.lock().expect("posted_ids poisoned");
+                posted_ids.extend(posted);
+                tracing::info!("Loaded {} posted message IDs from database", posted_ids.len());
+            }
+            Err(e) => tracing::warn!("Failed to load posted message IDs from database: {e}"),
+        }
         self.pool = Some(pool);
         self
     }
@@ -167,6 +175,53 @@ impl MattermostClient {
             .lock()
             .expect("posted_ids poisoned")
             .insert(external_id.to_string())
+    }
+
+    pub async fn is_posted(&self, external_id: &str) -> bool {
+        if self.posted_ids.lock().expect("posted_ids poisoned").contains(external_id) {
+            return true;
+        }
+        if let Some(pool) = &self.pool {
+            if let Ok(exists) = crate::db::is_message_posted(pool, external_id).await {
+                if exists {
+                    self.posted_ids.lock().expect("posted_ids poisoned").insert(external_id.to_string());
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    pub async fn maybe_update_display_name_by_conversation_id(
+        &self,
+        conversation_id: &str,
+        display_name: &str,
+    ) -> Result<(), anyhow::Error> {
+        // Check cache first
+        {
+            let cache = self.display_name_cache.lock().expect("display_name_cache poisoned");
+            if let Some(cached) = cache.get(conversation_id) {
+                if cached == display_name {
+                    return Ok(()); // Already set to same name
+                }
+            }
+        }
+
+        // Get team_id and channel
+        let team_id = self.get_team_id().await?;
+        let channel_id = self
+            .get_or_create_channel(&team_id, conversation_id, display_name)
+            .await?;
+
+        self.update_channel_display_name(&channel_id, display_name).await?;
+
+        // Update cache
+        {
+            let mut cache = self.display_name_cache.lock().expect("display_name_cache poisoned");
+            cache.insert(conversation_id.to_string(), display_name.to_string());
+        }
+
+        Ok(())
     }
 
     pub async fn mark_posted_persistent(

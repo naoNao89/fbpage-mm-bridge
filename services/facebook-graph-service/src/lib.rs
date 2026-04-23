@@ -31,7 +31,7 @@ use crate::config::Config;
 use crate::handlers::{
     exchange_token, full_history_reimport, get_import_status, health_check,
     import_all_conversations, import_single_conversation, reimport_all_conversations,
-    reimport_conversation, webhook_handler, webhook_verification,
+    reimport_conversation, sync_all_conversations, webhook_handler, webhook_verification,
     instagram_webhook_handler, instagram_webhook_verification,
 };
 use crate::services::{CustomerServiceClient, MattermostClient, MessageServiceClient};
@@ -72,6 +72,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/reimport/:id", post(reimport_conversation))
         .route("/api/reimport", post(reimport_all_conversations))
         .route("/api/reimport/full", post(full_history_reimport))
+        .route("/api/sync", post(sync_all_conversations))
         .route("/api/status", get(get_import_status))
         .route("/api/token/exchange", post(exchange_token))
         .with_state(state)

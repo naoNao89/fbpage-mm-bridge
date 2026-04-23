@@ -2113,3 +2113,249 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
 
     Ok(summary)
 }
+
+#[derive(Clone)]
+pub struct SyncResult {
+    pub messages_fetched: usize,
+    pub messages_posted: u32,
+    pub messages_skipped: u32,
+}
+
+pub async fn sync_all_conversations(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let channels = state
+        .mattermost_client
+        .get_all_t_channels()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let total = channels.len();
+    info!(
+        "Sync-all: starting background sync of {} channels",
+        total
+    );
+
+    tokio::spawn(async move {
+        let mut total_fetched = 0usize;
+        let mut total_posted = 0u32;
+        let mut total_skipped = 0u32;
+        let mut errors = 0u32;
+
+        for (idx, channel) in channels.iter().enumerate() {
+            let conv_id = &channel.name;
+            info!(
+                "Sync-all [{}/{}]: processing {}",
+                idx + 1,
+                total,
+                conv_id
+            );
+
+            match sync_conversation(&state, conv_id).await {
+                Ok(result) => {
+                    total_fetched += result.messages_fetched;
+                    total_posted += result.messages_posted;
+                    total_skipped += result.messages_skipped;
+                }
+                Err(e) => {
+                    tracing::error!("Sync-all: failed for {}: {}", conv_id, e);
+                    errors += 1;
+                }
+            }
+        }
+
+        info!(
+            "Sync-all complete: {} channels, {} fetched, {} posted, {} skipped, {} errors",
+            total, total_fetched, total_posted, total_skipped, errors
+        );
+    });
+
+    Ok(Json(serde_json::json!({
+        "status": "started",
+        "total_channels": total,
+        "message": "Sync running in background. Check logs for progress."
+    })))
+}
+
+pub async fn sync_all_conversations_sync(
+    state: &AppState,
+) -> Result<SyncResult, anyhow::Error> {
+    let channels = state
+        .mattermost_client
+        .get_all_t_channels()
+        .await?;
+    let total = channels.len();
+    info!("Sync-all (sync): starting sync of {} channels", total);
+
+    let mut total_fetched = 0usize;
+    let mut total_posted = 0u32;
+    let mut total_skipped = 0u32;
+    let mut errors = 0u32;
+
+    for (idx, channel) in channels.iter().enumerate() {
+        let conv_id = &channel.name;
+        info!(
+            "Sync-all [{}/{}]: processing {}",
+            idx + 1,
+            total,
+            conv_id
+        );
+
+        match sync_conversation(state, conv_id).await {
+            Ok(result) => {
+                total_fetched += result.messages_fetched;
+                total_posted += result.messages_posted;
+                total_skipped += result.messages_skipped;
+            }
+            Err(e) => {
+                tracing::error!("Sync-all: failed for {}: {}", conv_id, e);
+                errors += 1;
+            }
+        }
+    }
+
+    info!(
+        "Sync-all complete: {} channels, {} fetched, {} posted, {} skipped, {} errors",
+        total, total_fetched, total_posted, total_skipped, errors
+    );
+
+    Ok(SyncResult {
+        messages_fetched: total_fetched,
+        messages_posted: total_posted,
+        messages_skipped: total_skipped,
+    })
+}
+
+async fn sync_conversation(
+    state: &AppState,
+    conversation_id: &str,
+) -> Result<SyncResult, anyhow::Error> {
+    let mm = &state.mattermost_client;
+
+    let messages = graph_api::get_conversation_messages(
+        &state.pool,
+        conversation_id,
+        &state.config.facebook_page_access_token,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Failed to fetch messages: {e}"))?;
+
+    let total = messages.len();
+    tracing::info!(
+        "Sync: fetched {} messages for conversation {}",
+        total,
+        conversation_id
+    );
+
+    let mut messages = messages;
+    messages.sort_by_key(|m| m.created_time);
+
+    let mut timestamp_counts: std::collections::HashMap<i64, u32> = std::collections::HashMap::new();
+    for msg in &mut messages {
+        let ts = msg.created_time.timestamp_millis();
+        let count = timestamp_counts.entry(ts).or_insert(0);
+        if *count > 0 {
+            let offset = *count as i64;
+            msg.created_time = chrono::DateTime::from_timestamp_millis(ts + offset).unwrap_or(msg.created_time);
+        }
+        *count += 1;
+    }
+
+    let display_name = messages
+        .iter()
+        .find_map(|msg| {
+            if msg.from.id != state.config.facebook_page_id {
+                Some(msg.from.name.clone())
+            } else {
+                msg.to.data.first().map(|u| u.name.clone())
+            }
+        })
+        .unwrap_or_else(|| conversation_id.to_string());
+
+    let _ = mm
+        .maybe_update_display_name_by_conversation_id(conversation_id, &display_name)
+        .await;
+
+    let mut posted = 0u32;
+    let mut skipped = 0u32;
+    let mut root_id: Option<String> = None;
+
+    for msg in &messages {
+        if msg.from.id == state.config.facebook_page_id {
+            continue;
+        }
+
+        if mm.is_posted(&msg.id).await {
+            skipped += 1;
+            continue;
+        }
+
+        let text = match &msg.message {
+            Some(t) if !t.trim().is_empty() => t.as_str(),
+            _ => continue,
+        };
+
+        let customer_name = &msg.from.name;
+        let cust_id = &msg.from.id;
+
+        let (bot_uid, bot_token) = match mm
+            .get_or_create_customer_bot(cust_id, customer_name, conversation_id)
+            .await
+        {
+            Ok(bot) => bot,
+            Err(e) => {
+                tracing::warn!("Sync: bot creation failed for {}: {}", cust_id, e);
+                continue;
+            }
+        };
+
+        let team_id = match mm.get_team_id().await {
+            Ok(tid) => tid,
+            Err(e) => {
+                tracing::warn!("Sync: failed to get team_id: {}", e);
+                continue;
+            }
+        };
+        let channel_id = match mm.get_or_create_channel(&team_id, conversation_id, display_name.as_str()).await {
+            Ok(cid) => cid,
+            Err(e) => {
+                tracing::warn!("Sync: failed to get channel: {}", e);
+                continue;
+            }
+        };
+
+        let root = root_id.as_deref();
+        let msg_ts = Some(msg.created_time.timestamp_millis());
+
+        match mm
+            .post_message_as_bot_with_override(
+                &channel_id,
+                text,
+                root,
+                msg_ts,
+                &bot_uid,
+                &bot_token,
+                Some(customer_name),
+                None,
+            )
+            .await
+        {
+            Ok(post_id) => {
+                if root_id.is_none() {
+                    mm.set_root_id(conversation_id, &post_id);
+                    root_id = Some(post_id);
+                }
+                mm.mark_posted(&msg.id);
+                posted += 1;
+            }
+            Err(e) => {
+                tracing::warn!("Sync: bot post failed for {}: {}", conversation_id, e);
+            }
+        }
+    }
+
+    Ok(SyncResult {
+        messages_fetched: total,
+        messages_posted: posted,
+        messages_skipped: skipped,
+    })
+}

@@ -99,6 +99,26 @@ async fn main() -> anyhow::Result<()> {
         info!("Media download worker started (interval: 60s)");
     }
 
+    {
+        let sync_state = state.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+                info!("Starting hourly sync of all conversations...");
+                match facebook_graph_service::handlers::sync_all_conversations_sync(&sync_state).await {
+                    Ok(result) => {
+                        info!("Hourly sync completed: {} fetched, {} posted, {} skipped",
+                            result.messages_fetched, result.messages_posted, result.messages_skipped);
+                    }
+                    Err(e) => {
+                        tracing::error!("Hourly sync failed: {}", e);
+                    }
+                }
+            }
+        });
+        info!("Hourly sync scheduler started");
+    }
+
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
 

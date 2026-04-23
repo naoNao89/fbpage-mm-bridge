@@ -495,3 +495,18 @@ pub async fn clear_posted_messages(pool: &PgPool, conversation_id: &str) -> anyh
 
     Ok(result as u64)
 }
+
+pub async fn load_posted_message_ids(
+    pool: &PgPool,
+) -> anyhow::Result<std::collections::HashSet<String>> {
+    let rows = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT external_id FROM posted_message_ids
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .context("Failed to load posted message IDs")?;
+
+    Ok(rows.into_iter().collect())
+}
