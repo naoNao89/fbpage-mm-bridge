@@ -29,6 +29,11 @@ pub struct MessageServiceResponse {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct MarkSyncedPayload {
+    pub mattermost_channel: String,
+}
+
 /// Message Service HTTP client
 #[derive(Clone)]
 pub struct MessageServiceClient {
@@ -175,6 +180,36 @@ impl MessageServiceClient {
             return Err(anyhow::anyhow!(
                 "Message Service attachment update error {status}: {error_text}"
             ));
+        }
+
+        Ok(())
+    }
+
+    pub async fn mark_synced(
+        &self,
+        message_id: Uuid,
+        mattermost_channel: &str,
+    ) -> anyhow::Result<()> {
+        let url = format!("{}/api/messages/{message_id}/synced", self.base_url);
+
+        let payload = MarkSyncedPayload {
+            mattermost_channel: mattermost_channel.to_string(),
+        };
+
+        let response = self
+            .client
+            .put(&url)
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to send mark_synced request to Message Service")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            anyhow::bail!(
+                "Message Service mark_synced returned error {status}: {error_text}"
+            );
         }
 
         Ok(())

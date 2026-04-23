@@ -1,6 +1,21 @@
 use crate::AppState;
 use std::time::Duration;
 use tracing::{error, info, warn};
+use uuid::Uuid;
+
+async fn mark_message_synced(
+    state: &AppState,
+    msg_id: Uuid,
+    channel_id: &str,
+) {
+    if let Err(e) = state
+        .message_client
+        .mark_synced(msg_id, channel_id)
+        .await
+    {
+        warn!("Failed to mark message {} as synced to channel {}: {}", msg_id, channel_id, e);
+    }
+}
 
 pub async fn run_poller(state: AppState, interval_secs: u64) {
     let mut last_poll_ts = chrono::Utc::now() - chrono::Duration::seconds(interval_secs as i64 * 2);
@@ -257,6 +272,7 @@ async fn poll_conversation_new_messages(
                                     if root_id.is_none() {
                                         mm.set_root_id(conversation_id, &post_id);
                                     }
+                                    mark_message_synced(state, msg_resp.id, &channel_id).await;
                                     posted += 1;
                                 }
                                 Err(e) if e.to_string().contains("Duplicate post skipped") => {}
@@ -296,6 +312,7 @@ async fn poll_conversation_new_messages(
                                     match retry_result {
                                         Ok(post_id) => {
                                             mm.set_root_id(conversation_id, &post_id);
+                                            mark_message_synced(state, msg_resp.id, &channel_id).await;
                                             posted += 1;
                                         }
                                         Err(e) => {
@@ -303,13 +320,14 @@ async fn poll_conversation_new_messages(
                                                 "Retry bot post failed for {}: {}",
                                                 conversation_id, e
                                             );
-                                            if let Ok(post_id) = mm
-                                                .post_message(&channel_id, &msg_text, None, ts)
-                                                .await
-                                            {
-                                                mm.set_root_id(conversation_id, &post_id);
-                                                posted += 1;
-                                            }
+if let Ok(post_id) = mm
+                                                 .post_message(&channel_id, &msg_text, None, ts)
+                                                 .await
+                                             {
+                                                 mm.set_root_id(conversation_id, &post_id);
+                                                 mark_message_synced(state, msg_resp.id, &channel_id).await;
+                                                 posted += 1;
+                                             }
                                         }
                                     }
                                 }
@@ -318,14 +336,15 @@ async fn poll_conversation_new_messages(
                                         "Bot post failed for {}, falling back: {e}",
                                         conversation_id
                                     );
-                                    if let Ok(post_id) =
-                                        mm.post_message(&channel_id, &msg_text, msg_root, ts).await
-                                    {
-                                        if root_id.is_none() {
-                                            mm.set_root_id(conversation_id, &post_id);
-                                        }
-                                        posted += 1;
-                                    }
+if let Ok(post_id) =
+                                         mm.post_message(&channel_id, &msg_text, msg_root, ts).await
+                                     {
+                                         if root_id.is_none() {
+                                             mm.set_root_id(conversation_id, &post_id);
+                                         }
+                                         mark_message_synced(state, msg_resp.id, &channel_id).await;
+                                         posted += 1;
+                                     }
                                 }
                             }
                         }
@@ -348,6 +367,7 @@ async fn poll_conversation_new_messages(
                                 if root_id.is_none() {
                                     mm.set_root_id(conversation_id, &post_id);
                                 }
+                                mark_message_synced(state, msg_resp.id, &channel_id).await;
                                 posted += 1;
                             }
                         }
@@ -380,6 +400,7 @@ async fn poll_conversation_new_messages(
                             if root_id.is_none() {
                                 mm.set_root_id(conversation_id, &post_id);
                             }
+                            mark_message_synced(state, msg_resp.id, &channel_id).await;
                             posted += 1;
                         }
                         Err(e) if e.to_string().contains("Duplicate post skipped") => {}
