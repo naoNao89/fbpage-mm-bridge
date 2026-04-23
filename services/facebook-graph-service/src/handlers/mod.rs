@@ -141,14 +141,52 @@ pub async fn instagram_webhook_handler(
                             created_at: chrono::Utc::now(),
                         };
                         info!("Instagram: Storing message to message_service");
-                        let _ = state.message_client.store_message(payload).await;
+                        let store_result = state.message_client.store_message(payload).await;
+                        let msg_id = match store_result {
+                            Ok(msg) => msg.id,
+                            Err(e) => {
+                                warn!("Instagram: Failed to store message: {}", e);
+                                continue;
+                            }
+                        };
 
                         let display_name = customer.name.as_deref().unwrap_or(&customer_id);
                         info!("Instagram: Posting to Mattermost, conv_id={}, display_name={}", conv_id, display_name);
-                        let _ = state
+
+                        let team_id = match state.mattermost_client.get_team_id().await {
+                            Ok(id) => id,
+                            Err(e) => {
+                                warn!("Instagram: Could not determine Mattermost team_id: {}", e);
+                                continue;
+                            }
+                        };
+
+                        let channel_id = match state
                             .mattermost_client
-                            .post_message_with_override(&conv_id, &msg_text, None, None, Some(display_name), None)
+                            .get_or_create_channel(&team_id, &conv_id, display_name)
+                            .await
+                        {
+                            Ok(cid) => cid,
+                            Err(e) => {
+                                warn!("Instagram: Failed to get/create channel: {}", e);
+                                continue;
+                            }
+                        };
+
+                        let post_result = state
+                            .mattermost_client
+                            .post_message_with_override(&channel_id, &msg_text, None, None, Some(display_name), None)
                             .await;
+
+                        if post_result.is_ok() {
+                            if let Err(e) = state
+                                .message_client
+                                .mark_synced(msg_id, &channel_id)
+                                .await
+                            {
+                                warn!("Instagram: Failed to mark message as synced: {}", e);
+                            }
+                        }
                     }
                     Err(e) => {
                         error!("Instagram: Failed to get/create customer: {:?}", e);
@@ -319,7 +357,15 @@ pub async fn webhook_handler(
                         external_id: external_id.clone(),
                         created_at: chrono::Utc::now(),
                     };
-                    let _ = state.message_client.store_message(payload).await;
+
+                    let store_result = state.message_client.store_message(payload).await;
+                    let msg_id = match store_result {
+                        Ok(msg) => msg.id,
+                        Err(e) => {
+                            warn!("Failed to store message: {}", e);
+                            continue;
+                        }
+                    };
 
                     if let Some(ref eid) = external_id {
                         if !state.mattermost_client.mark_posted(eid) {
@@ -328,7 +374,7 @@ pub async fn webhook_handler(
                     }
 
                     let display_name = customer.name.as_deref().unwrap_or(&conversation_id);
-                    let _ = post_to_mattermost(
+                    if let Ok(Some(channel_id)) = post_to_mattermost(
                         &state,
                         &conversation_id,
                         &msg_text,
@@ -337,7 +383,16 @@ pub async fn webhook_handler(
                         direction,
                         Some(customer_id),
                     )
-                    .await;
+                    .await
+                    {
+                        if let Err(e) = state
+                            .message_client
+                            .mark_synced(msg_id, &channel_id)
+                            .await
+                        {
+                            warn!("Failed to mark message as synced: {}", e);
+                        }
+                    }
                 }
             }
         }
@@ -354,7 +409,7 @@ async fn post_to_mattermost(
     display_name: &str,
     direction: &str,
     customer_platform_id: Option<&str>,
-) -> Result<(), anyhow::Error> {
+) -> Result<Option<String>, anyhow::Error> {
     let mm = &state.mattermost_client;
     let team_id = match mm.get_team_id().await {
         Ok(id) => id,
@@ -363,7 +418,7 @@ async fn post_to_mattermost(
                 "Could not determine Mattermost team_id for conversation {}: {e}",
                 conversation_id
             );
-            return Ok(());
+            return Ok(None);
         }
     };
     if let Ok(channel_id) = mm
@@ -451,8 +506,10 @@ async fn post_to_mattermost(
             mm.post_message(&channel_id, text, root.as_deref(), None)
                 .await?;
         }
+        Ok(Some(channel_id))
+    } else {
+        Ok(None)
     }
-    Ok(())
 }
 
 /// Resolve a customer PSID to the Facebook Graph API conversation ID (t_xxx format).
