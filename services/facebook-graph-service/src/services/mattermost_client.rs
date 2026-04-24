@@ -1921,7 +1921,10 @@ impl MattermostClient {
             last_name: Option<String>,
         }
 
-        let users_response: UsersResponse = serde_json::from_str(&body_text).context("Failed to parse users response")?;
+        let users_response: UsersResponse = serde_json::from_str(&body_text).context(format!(
+            "Failed to parse users response. Body preview: {}",
+            &body_text[..body_text.len().min(300)]
+        ))?;
         let total_users = users_response.users.len();
 
         let bot_users: Vec<BotUserInfo> = users_response
