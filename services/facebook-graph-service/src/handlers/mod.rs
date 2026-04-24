@@ -2201,6 +2201,7 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
         summary.conversations_processed += 1;
 
         // Log progress every 100 conversations
+        #[allow(clippy::manual_is_multiple_of)]
         if summary.conversations_processed % 100 == 0 {
             info!(
                 "Full history reimport progress: {}/{} conversations, {} posts deleted, {} messages posted",
