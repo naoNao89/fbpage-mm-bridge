@@ -2526,3 +2526,67 @@ async fn sync_conversation(
         messages_skipped: skipped,
     })
 }
+
+#[derive(Debug, Serialize)]
+pub struct UpdateAvatarsResult {
+    pub total: usize,
+    pub updated: usize,
+    pub failed: usize,
+    pub errors: Vec<String>,
+}
+
+pub async fn update_all_avatars(
+    State(state): State<AppState>,
+) -> Result<Json<UpdateAvatarsResult>, (StatusCode, String)> {
+    let mm = &state.mattermost_client;
+    let fb_token = &state.config.facebook_page_access_token;
+
+    let bot_users = mm.get_all_bot_users().await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get bot users: {}", e))
+    })?;
+
+    let mut updated = 0;
+    let mut failed = 0;
+    let mut errors = Vec::new();
+
+    info!("Updating avatars for {} bot users", bot_users.len());
+
+    for bot in &bot_users {
+        let psid = bot.username.strip_prefix("fb-").unwrap_or(&bot.username);
+
+        match graph_api::get_profile_picture(psid, fb_token).await {
+            Ok(picture) => {
+                if picture.data.is_silhouette {
+                    info!("Bot {} has no profile picture (silhouette), skipping", bot.username);
+                    continue;
+                }
+
+                match mm.set_user_profile_image(&bot.id, &picture.data.url).await {
+                    Ok(()) => {
+                        info!("Updated avatar for bot {} ({})", bot.username, bot.id);
+                        updated += 1;
+                    }
+                    Err(e) => {
+                        warn!("Failed to set avatar for bot {}: {}", bot.username, e);
+                        failed += 1;
+                        errors.push(format!("{}: {}", bot.username, e));
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to get profile picture for bot {}: {}", bot.username, e);
+                failed += 1;
+                errors.push(format!("{}: {}", bot.username, e));
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+
+    Ok(Json(UpdateAvatarsResult {
+        total: bot_users.len(),
+        updated,
+        failed,
+        errors,
+    }))
+}

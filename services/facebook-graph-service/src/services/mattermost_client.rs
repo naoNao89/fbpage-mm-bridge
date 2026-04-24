@@ -1866,6 +1866,58 @@ impl MattermostClient {
 
         Ok(())
     }
+
+    pub async fn get_all_bot_users(&self) -> Result<Vec<BotUserInfo>> {
+        let auth = self.get_auth_header().await?;
+
+        let url = format!(
+            "{}/api/v4/users?per_page=200",
+            self.base_url
+        );
+
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await
+            .context("Failed to get users")?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Get users failed: {body}"));
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct UsersResponse {
+            #[serde(rename = "users")]
+            users: Vec<UserInfo>,
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct UserInfo {
+            id: String,
+            username: String,
+            #[serde(default)]
+            first_name: Option<String>,
+            #[serde(default)]
+            last_name: Option<String>,
+        }
+
+        let users_response: UsersResponse = resp.json().await.context("Failed to parse users response")?;
+
+        let bot_users: Vec<BotUserInfo> = users_response
+            .users
+            .into_iter()
+            .filter(|u| u.username.starts_with("fb-"))
+            .map(|u| BotUserInfo {
+                id: u.id,
+                username: u.username,
+            })
+            .collect();
+
+        Ok(bot_users)
+    }
 }
 
 // Data types for polling and channel listing
@@ -1893,4 +1945,10 @@ pub struct ChannelInfo {
     pub name: String,
     pub display_name: String,
     pub team_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct BotUserInfo {
+    pub id: String,
+    pub username: String,
 }
