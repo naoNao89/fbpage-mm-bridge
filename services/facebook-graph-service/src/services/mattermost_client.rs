@@ -130,7 +130,9 @@ impl MattermostClient {
 
     /// Login to Mattermost and cache the token
     pub async fn login(&self) -> Result<()> {
+        tracing::info!("Attempting Mattermost login with username: {}", self.username);
         let url = format!("{}/api/v4/users/login", self.base_url);
+        tracing::debug!("Login URL: {}", url);
         let payload = serde_json::json!({
             "login_id": self.username,
             "password": self.password,
@@ -145,6 +147,7 @@ impl MattermostClient {
             .context("Failed to send login request to Mattermost")?;
 
         let status = resp.status();
+        tracing::info!("Login response status: {}", status);
         let token_from_header = resp
             .headers()
             .get("Token")
@@ -153,6 +156,7 @@ impl MattermostClient {
         let body_text = resp.text().await.unwrap_or_default();
 
         if !status.is_success() {
+            tracing::error!("Mattermost login failed with {}: {}", status, body_text);
             return Err(anyhow::anyhow!(
                 "Mattermost login failed with {status}: {body_text}"
             ));
@@ -170,6 +174,7 @@ impl MattermostClient {
                 )
             })?;
 
+        tracing::info!("Login successful, token obtained: {}...", &token[..token.len().min(10)]);
         let mut tok = self.token.lock().expect("token lock poisoned");
         *tok = Some(token);
 
@@ -291,10 +296,12 @@ impl MattermostClient {
     /// Get authorization header value, logging in if needed
     pub async fn get_auth_header(&self) -> Result<String> {
         let needs_login = self.token.lock().expect("token lock poisoned").is_none();
+        tracing::debug!("get_auth_header called, needs_login: {}", needs_login);
         if needs_login {
             self.login().await?;
         }
         let token = self.token.lock().expect("token lock poisoned").clone();
+        tracing::debug!("Token after login/check: {:?}", token.as_ref().map(|t| &t[..t.len().min(10)]));
         token.ok_or_else(|| anyhow::anyhow!("No token after login"))
     }
 
@@ -1869,11 +1876,13 @@ impl MattermostClient {
 
     pub async fn get_all_bot_users(&self) -> Result<Vec<BotUserInfo>> {
         let auth = self.get_auth_header().await?;
+        tracing::debug!("Got auth token for get_all_bot_users: {}", &auth[..auth.len().min(10)]);
 
         let url = format!(
             "{}/api/v4/users?per_page=200",
             self.base_url
         );
+        tracing::debug!("Fetching users from: {}", url);
 
         let resp = self
             .client
@@ -1883,10 +1892,18 @@ impl MattermostClient {
             .await
             .context("Failed to get users")?;
 
-        if !resp.status().is_success() {
+        tracing::debug!("Users API response status: {}", resp.status());
+        let status = resp.status();
+
+        if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
+            tracing::error!("Get users failed with status {}: {}", status, body);
             return Err(anyhow::anyhow!("Get users failed: {body}"));
         }
+
+        let body_text = resp.text().await.context("Failed to read users response body")?;
+        tracing::debug!("Users response body length: {} bytes", body_text.len());
+        tracing::debug!("Users response body preview: {}", &body_text[..body_text.len().min(500)]);
 
         #[derive(Debug, Deserialize)]
         struct UsersResponse {
@@ -1904,7 +1921,8 @@ impl MattermostClient {
             last_name: Option<String>,
         }
 
-        let users_response: UsersResponse = resp.json().await.context("Failed to parse users response")?;
+        let users_response: UsersResponse = serde_json::from_str(&body_text).context("Failed to parse users response")?;
+        let total_users = users_response.users.len();
 
         let bot_users: Vec<BotUserInfo> = users_response
             .users
@@ -1916,6 +1934,7 @@ impl MattermostClient {
             })
             .collect();
 
+        tracing::info!("Found {} bot users out of {} total users", bot_users.len(), total_users);
         Ok(bot_users)
     }
 }
