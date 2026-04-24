@@ -44,7 +44,7 @@ async fn poll_recent_conversations(
 
     let all_conversations: Vec<_> = fb_conversations
         .into_iter()
-        .chain(ig_conversations.into_iter())
+        .chain(ig_conversations)
         .collect();
 
     if all_conversations.is_empty() {
