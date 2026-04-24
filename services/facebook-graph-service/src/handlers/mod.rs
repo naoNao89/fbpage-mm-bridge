@@ -71,6 +71,24 @@ pub async fn instagram_webhook_handler(
 ) -> Result<StatusCode, (StatusCode, String)> {
     info!("Received Instagram webhook event: {}", &body);
 
+    let ig_user_id = state.config.instagram_ig_user_id.clone();
+    let access_token = state.config.facebook_page_access_token.clone();
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        let url = format!(
+            "https://graph.facebook.com/v24.0/{}/subscribed_apps?access_token={}",
+            ig_user_id, access_token
+        );
+        let payload = serde_json::json!({
+            "subscribed_fields": ["messages", "messaging_postbacks", "messaging_referrals"]
+        });
+        if let Ok(resp) = client.post(&url).json(&payload).send().await {
+            if resp.status().is_success() {
+                debug!("Resubscribed Instagram webhook events");
+            }
+        }
+    });
+
     let payload = match serde_json::from_str::<InstagramWebhookPayload>(&body) {
         Ok(p) => p,
         Err(e) => {
@@ -232,6 +250,23 @@ pub async fn webhook_handler(
     body: String,
 ) -> Result<StatusCode, (StatusCode, String)> {
     info!("Received webhook event: {}", &body);
+
+    let access_token = state.config.facebook_page_access_token.clone();
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        let url = format!(
+            "https://graph.facebook.com/v24.0/me/subscribed_apps?access_token={}",
+            access_token
+        );
+        let payload = serde_json::json!({
+            "subscribed_fields": ["messages", "messaging_postbacks", "messaging_referrals"]
+        });
+        if let Ok(resp) = client.post(&url).json(&payload).send().await {
+            if resp.status().is_success() {
+                debug!("Resubscribed to webhook events");
+            }
+        }
+    });
 
     let payload = match parse_webhook_entry(&body) {
         Some(p) => {
