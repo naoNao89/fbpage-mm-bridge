@@ -6,4 +6,6 @@ mod message_client;
 
 pub use customer_client::{CustomerServiceClient, CustomerServicePayload, CustomerServiceResponse};
 pub use mattermost_client::{ChannelInfo, MattermostClient, MattermostPost};
-pub use message_client::{AttachmentPayload, MarkSyncedPayload, MessageServiceClient, MessageServicePayload};
+pub use message_client::{
+    AttachmentPayload, MarkSyncedPayload, MessageServiceClient, MessageServicePayload,
+};

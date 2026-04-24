@@ -76,8 +76,7 @@ pub async fn instagram_webhook_handler(
     tokio::spawn(async move {
         let client = reqwest::Client::new();
         let url = format!(
-            "https://graph.facebook.com/v24.0/{}/subscribed_apps?access_token={}",
-            ig_user_id, access_token
+            "https://graph.facebook.com/v24.0/{ig_user_id}/subscribed_apps?access_token={access_token}"
         );
         let payload = serde_json::json!({
             "subscribed_fields": ["messages", "messaging_postbacks", "messaging_referrals"]
@@ -130,14 +129,22 @@ pub async fn instagram_webhook_handler(
                 text = message.text.clone();
                 external_id = message.mid.clone();
             } else if let Some(ref postback) = msg_event.postback {
-                text = Some(postback.title.clone().unwrap_or_else(|| postback.payload.clone()));
+                text = Some(
+                    postback
+                        .title
+                        .clone()
+                        .unwrap_or_else(|| postback.payload.clone()),
+                );
                 external_id = None;
             } else {
                 info!("Instagram: No message or postback found, skipping");
                 continue;
             }
 
-            info!("Instagram: customer_id={}, text={:?}, external_id={:?}", customer_id, text, external_id);
+            info!(
+                "Instagram: customer_id={}, text={:?}, external_id={:?}",
+                customer_id, text, external_id
+            );
 
             if let Some(msg_text) = text {
                 info!("Instagram: Calling customer_client.get_or_create_customer");
@@ -148,7 +155,7 @@ pub async fn instagram_webhook_handler(
                 {
                     Ok(customer) => {
                         info!("Instagram: Got customer: {:?}", customer);
-                        let conv_id = format!("ig_{}", customer_id);
+                        let conv_id = format!("ig_{customer_id}");
                         let payload = MessageServicePayload {
                             conversation_id: conv_id.clone(),
                             customer_id: customer.id,
@@ -169,7 +176,10 @@ pub async fn instagram_webhook_handler(
                         };
 
                         let display_name = customer.name.as_deref().unwrap_or(&customer_id);
-                        info!("Instagram: Posting to Mattermost, conv_id={}, display_name={}", conv_id, display_name);
+                        info!(
+                            "Instagram: Posting to Mattermost, conv_id={}, display_name={}",
+                            conv_id, display_name
+                        );
 
                         let team_id = match state.mattermost_client.get_team_id().await {
                             Ok(id) => id,
@@ -193,14 +203,19 @@ pub async fn instagram_webhook_handler(
 
                         let post_result = state
                             .mattermost_client
-                            .post_message_with_override(&channel_id, &msg_text, None, None, Some(display_name), None)
+                            .post_message_with_override(
+                                &channel_id,
+                                &msg_text,
+                                None,
+                                None,
+                                Some(display_name),
+                                None,
+                            )
                             .await;
 
                         if post_result.is_ok() {
-                            if let Err(e) = state
-                                .message_client
-                                .mark_synced(msg_id, &channel_id)
-                                .await
+                            if let Err(e) =
+                                state.message_client.mark_synced(msg_id, &channel_id).await
                             {
                                 warn!("Instagram: Failed to mark message as synced: {}", e);
                             }
@@ -255,8 +270,7 @@ pub async fn webhook_handler(
     tokio::spawn(async move {
         let client = reqwest::Client::new();
         let url = format!(
-            "https://graph.facebook.com/v24.0/me/subscribed_apps?access_token={}",
-            access_token
+            "https://graph.facebook.com/v24.0/me/subscribed_apps?access_token={access_token}"
         );
         let payload = serde_json::json!({
             "subscribed_fields": ["messages", "messaging_postbacks", "messaging_referrals"]
@@ -420,10 +434,7 @@ pub async fn webhook_handler(
                     )
                     .await
                     {
-                        if let Err(e) = state
-                            .message_client
-                            .mark_synced(msg_id, &channel_id)
-                            .await
+                        if let Err(e) = state.message_client.mark_synced(msg_id, &channel_id).await
                         {
                             warn!("Failed to mark message as synced: {}", e);
                         }
@@ -2222,10 +2233,7 @@ pub async fn sync_all_conversations(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let total = channels.len();
-    info!(
-        "Sync-all: starting background sync of {} channels",
-        total
-    );
+    info!("Sync-all: starting background sync of {} channels", total);
 
     tokio::spawn(async move {
         let mut total_fetched = 0usize;
@@ -2235,12 +2243,7 @@ pub async fn sync_all_conversations(
 
         for (idx, channel) in channels.iter().enumerate() {
             let conv_id = &channel.name;
-            info!(
-                "Sync-all [{}/{}]: processing {}",
-                idx + 1,
-                total,
-                conv_id
-            );
+            info!("Sync-all [{}/{}]: processing {}", idx + 1, total, conv_id);
 
             match sync_conversation(&state, conv_id).await {
                 Ok(result) => {
@@ -2268,13 +2271,8 @@ pub async fn sync_all_conversations(
     })))
 }
 
-pub async fn sync_all_conversations_sync(
-    state: &AppState,
-) -> Result<SyncResult, anyhow::Error> {
-    let channels = state
-        .mattermost_client
-        .get_all_t_channels()
-        .await?;
+pub async fn sync_all_conversations_sync(state: &AppState) -> Result<SyncResult, anyhow::Error> {
+    let channels = state.mattermost_client.get_all_t_channels().await?;
     let total = channels.len();
     info!("Sync-all (sync): starting sync of {} channels", total);
 
@@ -2285,12 +2283,7 @@ pub async fn sync_all_conversations_sync(
 
     for (idx, channel) in channels.iter().enumerate() {
         let conv_id = &channel.name;
-        info!(
-            "Sync-all [{}/{}]: processing {}",
-            idx + 1,
-            total,
-            conv_id
-        );
+        info!("Sync-all [{}/{}]: processing {}", idx + 1, total, conv_id);
 
         match sync_conversation(state, conv_id).await {
             Ok(result) => {
@@ -2341,13 +2334,15 @@ async fn sync_conversation(
     let mut messages = messages;
     messages.sort_by_key(|m| m.created_time);
 
-    let mut timestamp_counts: std::collections::HashMap<i64, u32> = std::collections::HashMap::new();
+    let mut timestamp_counts: std::collections::HashMap<i64, u32> =
+        std::collections::HashMap::new();
     for msg in &mut messages {
         let ts = msg.created_time.timestamp_millis();
         let count = timestamp_counts.entry(ts).or_insert(0);
         if *count > 0 {
             let offset = *count as i64;
-            msg.created_time = chrono::DateTime::from_timestamp_millis(ts + offset).unwrap_or(msg.created_time);
+            msg.created_time =
+                chrono::DateTime::from_timestamp_millis(ts + offset).unwrap_or(msg.created_time);
         }
         *count += 1;
     }
@@ -2407,7 +2402,10 @@ async fn sync_conversation(
                 continue;
             }
         };
-        let channel_id = match mm.get_or_create_channel(&team_id, conversation_id, display_name.as_str()).await {
+        let channel_id = match mm
+            .get_or_create_channel(&team_id, conversation_id, display_name.as_str())
+            .await
+        {
             Ok(cid) => cid,
             Err(e) => {
                 tracing::warn!("Sync: failed to get channel: {}", e);
@@ -2470,7 +2468,11 @@ async fn sync_conversation(
                 posted += 1;
             }
             Err(e) => {
-                tracing::warn!("Sync: bot post failed for {}, falling back to admin: {}", conversation_id, e);
+                tracing::warn!(
+                    "Sync: bot post failed for {}, falling back to admin: {}",
+                    conversation_id,
+                    e
+                );
                 let fallback_result = mm.post_message(&channel_id, &msg_text, root, msg_ts).await;
                 match fallback_result {
                     Ok(post_id) => {
@@ -2482,7 +2484,11 @@ async fn sync_conversation(
                         posted += 1;
                     }
                     Err(e2) => {
-                        tracing::warn!("Sync: fallback to admin failed for {}: {}", conversation_id, e2);
+                        tracing::warn!(
+                            "Sync: fallback to admin failed for {}: {}",
+                            conversation_id,
+                            e2
+                        );
                         mm.mark_posted(&msg.id);
                     }
                 }

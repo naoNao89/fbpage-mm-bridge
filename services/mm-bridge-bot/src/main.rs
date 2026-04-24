@@ -130,13 +130,14 @@ async fn poll_and_respond(
                 continue;
             }
 
-            let psid = match lookup_psid(&channel.name, message_service_url, customer_service_url).await {
-                Ok(p) => p,
-                Err(e) => {
-                    warn!("Could not find PSID for conv {}: {e}", channel.name);
-                    continue;
-                }
-            };
+            let psid =
+                match lookup_psid(&channel.name, message_service_url, customer_service_url).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!("Could not find PSID for conv {}: {e}", channel.name);
+                        continue;
+                    }
+                };
 
             let fb_url =
                 format!("https://graph.facebook.com/v24.0/me/messages?access_token={fb_token}");

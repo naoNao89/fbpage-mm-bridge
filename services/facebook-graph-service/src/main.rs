@@ -105,10 +105,16 @@ async fn main() -> anyhow::Result<()> {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
                 info!("Starting hourly sync of all conversations...");
-                match facebook_graph_service::handlers::sync_all_conversations_sync(&sync_state).await {
+                match facebook_graph_service::handlers::sync_all_conversations_sync(&sync_state)
+                    .await
+                {
                     Ok(result) => {
-                        info!("Hourly sync completed: {} fetched, {} posted, {} skipped",
-                            result.messages_fetched, result.messages_posted, result.messages_skipped);
+                        info!(
+                            "Hourly sync completed: {} fetched, {} posted, {} skipped",
+                            result.messages_fetched,
+                            result.messages_posted,
+                            result.messages_skipped
+                        );
                     }
                     Err(e) => {
                         tracing::error!("Hourly sync failed: {}", e);

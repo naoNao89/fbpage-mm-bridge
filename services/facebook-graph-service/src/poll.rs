@@ -3,17 +3,12 @@ use std::time::Duration;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-async fn mark_message_synced(
-    state: &AppState,
-    msg_id: Uuid,
-    channel_id: &str,
-) {
-    if let Err(e) = state
-        .message_client
-        .mark_synced(msg_id, channel_id)
-        .await
-    {
-        warn!("Failed to mark message {} as synced to channel {}: {}", msg_id, channel_id, e);
+async fn mark_message_synced(state: &AppState, msg_id: Uuid, channel_id: &str) {
+    if let Err(e) = state.message_client.mark_synced(msg_id, channel_id).await {
+        warn!(
+            "Failed to mark message {} as synced to channel {}: {}",
+            msg_id, channel_id, e
+        );
     }
 }
 
@@ -44,7 +39,8 @@ async fn poll_recent_conversations(
     since: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<usize> {
     let fb_conversations = crate::graph_api::get_recent_conversations(&state.config, since).await?;
-    let ig_conversations = crate::graph_api::get_ig_recent_conversations(&state.config, since).await?;
+    let ig_conversations =
+        crate::graph_api::get_ig_recent_conversations(&state.config, since).await?;
 
     let all_conversations: Vec<_> = fb_conversations
         .into_iter()
@@ -312,7 +308,8 @@ async fn poll_conversation_new_messages(
                                     match retry_result {
                                         Ok(post_id) => {
                                             mm.set_root_id(conversation_id, &post_id);
-                                            mark_message_synced(state, msg_resp.id, &channel_id).await;
+                                            mark_message_synced(state, msg_resp.id, &channel_id)
+                                                .await;
                                             posted += 1;
                                         }
                                         Err(e) => {
@@ -320,14 +317,19 @@ async fn poll_conversation_new_messages(
                                                 "Retry bot post failed for {}: {}",
                                                 conversation_id, e
                                             );
-if let Ok(post_id) = mm
-                                                 .post_message(&channel_id, &msg_text, None, ts)
-                                                 .await
-                                             {
-                                                 mm.set_root_id(conversation_id, &post_id);
-                                                 mark_message_synced(state, msg_resp.id, &channel_id).await;
-                                                 posted += 1;
-                                             }
+                                            if let Ok(post_id) = mm
+                                                .post_message(&channel_id, &msg_text, None, ts)
+                                                .await
+                                            {
+                                                mm.set_root_id(conversation_id, &post_id);
+                                                mark_message_synced(
+                                                    state,
+                                                    msg_resp.id,
+                                                    &channel_id,
+                                                )
+                                                .await;
+                                                posted += 1;
+                                            }
                                         }
                                     }
                                 }
@@ -336,15 +338,15 @@ if let Ok(post_id) = mm
                                         "Bot post failed for {}, falling back: {e}",
                                         conversation_id
                                     );
-if let Ok(post_id) =
-                                         mm.post_message(&channel_id, &msg_text, msg_root, ts).await
-                                     {
-                                         if root_id.is_none() {
-                                             mm.set_root_id(conversation_id, &post_id);
-                                         }
-                                         mark_message_synced(state, msg_resp.id, &channel_id).await;
-                                         posted += 1;
-                                     }
+                                    if let Ok(post_id) =
+                                        mm.post_message(&channel_id, &msg_text, msg_root, ts).await
+                                    {
+                                        if root_id.is_none() {
+                                            mm.set_root_id(conversation_id, &post_id);
+                                        }
+                                        mark_message_synced(state, msg_resp.id, &channel_id).await;
+                                        posted += 1;
+                                    }
                                 }
                             }
                         }

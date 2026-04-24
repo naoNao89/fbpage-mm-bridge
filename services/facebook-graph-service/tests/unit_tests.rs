@@ -569,7 +569,10 @@ mod tests {
             let base_url = "http://localhost:3002";
             let message_id = "123e4567-e89b-12d3-a456-426614174000";
             let url = format!("{}/api/messages/{}/synced", base_url, message_id);
-            assert_eq!(url, "http://localhost:3002/api/messages/123e4567-e89b-12d3-a456-426614174000/synced");
+            assert_eq!(
+                url,
+                "http://localhost:3002/api/messages/123e4567-e89b-12d3-a456-426614174000/synced"
+            );
         }
     }
 
@@ -650,7 +653,10 @@ mod tests {
             }
 
             let response: MessageResponse = serde_json::from_value(json).unwrap();
-            assert_eq!(response.mattermost_sync_error, Some("Channel not found".to_string()));
+            assert_eq!(
+                response.mattermost_sync_error,
+                Some("Channel not found".to_string())
+            );
         }
     }
 }

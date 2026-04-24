@@ -207,9 +207,7 @@ impl MessageServiceClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await?;
-            anyhow::bail!(
-                "Message Service mark_synced returned error {status}: {error_text}"
-            );
+            anyhow::bail!("Message Service mark_synced returned error {status}: {error_text}");
         }
 
         Ok(())
