@@ -79,6 +79,7 @@ services:
       - MATTERMOST_URL=http://mattermost:8065
       - MATTERMOST_USERNAME=${MATTERMOST_USERNAME:-admin}
       - MATTERMOST_PASSWORD=${MATTERMOST_PASSWORD}
+      - MATTERMOST_DATABASE_URL=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@mattermost-db:5432/${MATTERMOST_DB:-mattermost}
       - POLL_INTERVAL_SECS=${POLL_INTERVAL_SECS:-30}
       - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
@@ -111,7 +112,6 @@ services:
       - MATTERMOST_PASSWORD=${MATTERMOST_PASSWORD}
       - FACEBOOK_PAGE_ACCESS_TOKEN=${FACEBOOK_PAGE_ACCESS_TOKEN}
       - CUSTOMER_SERVICE_URL=http://customer-service:3001
-      - MESSAGE_SERVICE_URL=http://message-service:3002
       - LOG_LEVEL=${LOG_LEVEL:-info}
     depends_on:
       - mattermost
