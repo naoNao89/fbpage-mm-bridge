@@ -324,6 +324,83 @@ pub async fn get_recent_conversations(
     Ok(recent)
 }
 
+pub async fn get_ig_recent_conversations(
+    config: &Config,
+    since: DateTime<Utc>,
+) -> Result<Vec<Conversation>> {
+    let ig_user_id = &config.instagram_ig_user_id;
+    if ig_user_id.is_empty() {
+        info!("Instagram IG user ID not configured, skipping IG conversations");
+        return Ok(Vec::new());
+    }
+
+    let client = Client::new();
+    let access_token = &config.facebook_page_access_token;
+    let page_id = &config.facebook_page_id;
+
+    let mut recent = Vec::new();
+    // Use page conversations endpoint with platform=instagram filter
+    // This works with Page access token, no separate IG API permissions needed
+    let mut next_url = Some(format!(
+        "{GRAPH_API_BASE}/{page_id}/conversations?fields=id,updated_time,message_count&platform=instagram&access_token={access_token}&limit=25"
+    ));
+    let mut page = 0;
+
+    while let Some(url) = next_url {
+        page += 1;
+        let response = client
+            .get(&url)
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .send()
+            .await
+            .context("Failed to fetch IG conversations for polling")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            return Err(anyhow::anyhow!(
+                "IG Conversations poll failed {status}: {error_text}"
+            ));
+        }
+
+        let conv_response: ConversationsResponse = response
+            .json()
+            .await
+            .context("Failed to parse IG conversations response")?;
+
+        let mut found_old = false;
+        for conv in conv_response.data {
+            if conv.updated_time > since {
+                let mut ig_conv = conv;
+                ig_conv.ig_user_id = Some(ig_user_id.clone());
+                recent.push(ig_conv);
+            } else {
+                found_old = true;
+                break;
+            }
+        }
+
+        if found_old {
+            break;
+        }
+
+        next_url = conv_response.paging.and_then(|p| p.next);
+
+        if next_url.is_some() {
+            tokio::time::sleep(Duration::from_millis(PAGINATION_DELAY_MS)).await;
+        }
+    }
+
+    info!(
+        "IG Poll: found {} conversations updated since {} ({} pages)",
+        recent.len(),
+        since,
+        page
+    );
+
+    Ok(recent)
+}
+
 // Conversation Fetching
 
 /// Fetch all conversations from Facebook Graph API with pagination

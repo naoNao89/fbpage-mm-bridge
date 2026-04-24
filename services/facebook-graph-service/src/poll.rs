@@ -1,6 +1,16 @@
 use crate::AppState;
 use std::time::Duration;
 use tracing::{error, info, warn};
+use uuid::Uuid;
+
+async fn mark_message_synced(state: &AppState, msg_id: Uuid, channel_id: &str) {
+    if let Err(e) = state.message_client.mark_synced(msg_id, channel_id).await {
+        warn!(
+            "Failed to mark message {} as synced to channel {}: {}",
+            msg_id, channel_id, e
+        );
+    }
+}
 
 pub async fn run_poller(state: AppState, interval_secs: u64) {
     let mut last_poll_ts = chrono::Utc::now() - chrono::Duration::seconds(interval_secs as i64 * 2);
@@ -28,21 +38,28 @@ async fn poll_recent_conversations(
     state: &AppState,
     since: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<usize> {
-    let conversations = crate::graph_api::get_recent_conversations(&state.config, since).await?;
+    let fb_conversations = crate::graph_api::get_recent_conversations(&state.config, since).await?;
+    let ig_conversations =
+        crate::graph_api::get_ig_recent_conversations(&state.config, since).await?;
 
-    if conversations.is_empty() {
+    let all_conversations: Vec<_> = fb_conversations
+        .into_iter()
+        .chain(ig_conversations)
+        .collect();
+
+    if all_conversations.is_empty() {
         return Ok(0);
     }
 
     info!(
         "Poller: {} conversations updated since {}",
-        conversations.len(),
+        all_conversations.len(),
         since
     );
 
     let mut total_posted = 0;
 
-    for conv in &conversations {
+    for conv in &all_conversations {
         match poll_conversation_new_messages(state, &conv.id, since).await {
             Ok(count) => {
                 if count > 0 {
@@ -251,6 +268,7 @@ async fn poll_conversation_new_messages(
                                     if root_id.is_none() {
                                         mm.set_root_id(conversation_id, &post_id);
                                     }
+                                    mark_message_synced(state, msg_resp.id, &channel_id).await;
                                     posted += 1;
                                 }
                                 Err(e) if e.to_string().contains("Duplicate post skipped") => {}
@@ -290,6 +308,8 @@ async fn poll_conversation_new_messages(
                                     match retry_result {
                                         Ok(post_id) => {
                                             mm.set_root_id(conversation_id, &post_id);
+                                            mark_message_synced(state, msg_resp.id, &channel_id)
+                                                .await;
                                             posted += 1;
                                         }
                                         Err(e) => {
@@ -302,6 +322,12 @@ async fn poll_conversation_new_messages(
                                                 .await
                                             {
                                                 mm.set_root_id(conversation_id, &post_id);
+                                                mark_message_synced(
+                                                    state,
+                                                    msg_resp.id,
+                                                    &channel_id,
+                                                )
+                                                .await;
                                                 posted += 1;
                                             }
                                         }
@@ -318,6 +344,7 @@ async fn poll_conversation_new_messages(
                                         if root_id.is_none() {
                                             mm.set_root_id(conversation_id, &post_id);
                                         }
+                                        mark_message_synced(state, msg_resp.id, &channel_id).await;
                                         posted += 1;
                                     }
                                 }
@@ -342,6 +369,7 @@ async fn poll_conversation_new_messages(
                                 if root_id.is_none() {
                                     mm.set_root_id(conversation_id, &post_id);
                                 }
+                                mark_message_synced(state, msg_resp.id, &channel_id).await;
                                 posted += 1;
                             }
                         }
@@ -374,6 +402,7 @@ async fn poll_conversation_new_messages(
                             if root_id.is_none() {
                                 mm.set_root_id(conversation_id, &post_id);
                             }
+                            mark_message_synced(state, msg_resp.id, &channel_id).await;
                             posted += 1;
                         }
                         Err(e) if e.to_string().contains("Duplicate post skipped") => {}

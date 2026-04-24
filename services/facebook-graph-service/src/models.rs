@@ -65,6 +65,9 @@ pub struct Conversation {
     pub updated_time: DateTime<Utc>,
     #[serde(default)]
     pub message_count: Option<i32>,
+    /// Instagram IG user ID (only set for Instagram-sourced conversations)
+    #[serde(default, rename = "from")]
+    pub ig_user_id: Option<String>,
 }
 
 /// Facebook conversations response with paging

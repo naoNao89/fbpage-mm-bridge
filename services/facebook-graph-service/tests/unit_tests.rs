@@ -541,4 +541,122 @@ mod tests {
             assert!(attachment.video_data.is_some());
         }
     }
+
+    mod mark_synced {
+        use facebook_graph_service::services::MarkSyncedPayload;
+
+        #[test]
+        fn test_mark_synced_payload_creation() {
+            let payload = MarkSyncedPayload {
+                mattermost_channel: "t_conv_123".to_string(),
+            };
+
+            assert_eq!(payload.mattermost_channel, "t_conv_123");
+        }
+
+        #[test]
+        fn test_mark_synced_payload_serialization() {
+            let payload = MarkSyncedPayload {
+                mattermost_channel: "channel_abc".to_string(),
+            };
+
+            let json = serde_json::to_string(&payload).unwrap();
+            assert!(json.contains("\"mattermost_channel\":\"channel_abc\""));
+        }
+
+        #[test]
+        fn test_mark_synced_url_format() {
+            let base_url = "http://localhost:3002";
+            let message_id = "123e4567-e89b-12d3-a456-426614174000";
+            let url = format!("{}/api/messages/{}/synced", base_url, message_id);
+            assert_eq!(
+                url,
+                "http://localhost:3002/api/messages/123e4567-e89b-12d3-a456-426614174000/synced"
+            );
+        }
+    }
+
+    mod sync_tracking {
+        #[test]
+        fn test_mattermost_channel_field_in_message() {
+            let json = serde_json::json!({
+                "id": "123e4567-e89b-12d3-a456-426614174000",
+                "customer_id": "123e4567-e89b-12d3-a456-426614174001",
+                "conversation_id": "t_conv_123",
+                "platform": "facebook",
+                "direction": "incoming",
+                "message_text": "Hello!",
+                "external_id": "msg_123",
+                "mattermost_channel": "t_conv_123",
+                "mattermost_synced_at": "2024-01-15T10:30:00Z",
+                "mattermost_sync_error": null,
+                "created_at": "2024-01-15T10:00:00Z"
+            });
+
+            #[derive(serde::Deserialize, Debug)]
+            struct MessageResponse {
+                mattermost_channel: Option<String>,
+                mattermost_synced_at: Option<String>,
+            }
+
+            let response: MessageResponse = serde_json::from_value(json).unwrap();
+            assert_eq!(response.mattermost_channel, Some("t_conv_123".to_string()));
+            assert!(response.mattermost_synced_at.is_some());
+        }
+
+        #[test]
+        fn test_unsynced_message_has_null_channel() {
+            let json = serde_json::json!({
+                "id": "123e4567-e89b-12d3-a456-426614174000",
+                "customer_id": "123e4567-e89b-12d3-a456-426614174001",
+                "conversation_id": "t_conv_123",
+                "platform": "facebook",
+                "direction": "incoming",
+                "message_text": "Hello!",
+                "external_id": "msg_123",
+                "mattermost_channel": null,
+                "mattermost_synced_at": null,
+                "mattermost_sync_error": null,
+                "created_at": "2024-01-15T10:00:00Z"
+            });
+
+            #[derive(serde::Deserialize, Debug)]
+            struct MessageResponse {
+                mattermost_channel: Option<String>,
+                mattermost_synced_at: Option<String>,
+            }
+
+            let response: MessageResponse = serde_json::from_value(json).unwrap();
+            assert!(response.mattermost_channel.is_none());
+            assert!(response.mattermost_synced_at.is_none());
+        }
+
+        #[test]
+        fn test_sync_error_tracking() {
+            let json = serde_json::json!({
+                "id": "123e4567-e89b-12d3-a456-426614174000",
+                "customer_id": "123e4567-e89b-12d3-a456-426614174001",
+                "conversation_id": "t_conv_123",
+                "platform": "facebook",
+                "direction": "incoming",
+                "message_text": "Hello!",
+                "external_id": "msg_123",
+                "mattermost_channel": null,
+                "mattermost_synced_at": null,
+                "mattermost_sync_error": "Channel not found",
+                "created_at": "2024-01-15T10:00:00Z"
+            });
+
+            #[derive(serde::Deserialize, Debug)]
+            struct MessageResponse {
+                mattermost_sync_error: Option<String>,
+            }
+
+            let response: MessageResponse = serde_json::from_value(json).unwrap();
+            assert_eq!(
+                response.mattermost_sync_error,
+                Some("Channel not found".to_string())
+            );
+        }
+    }
 }

@@ -111,6 +111,7 @@ services:
       - MATTERMOST_PASSWORD=${MATTERMOST_PASSWORD}
       - FACEBOOK_PAGE_ACCESS_TOKEN=${FACEBOOK_PAGE_ACCESS_TOKEN}
       - CUSTOMER_SERVICE_URL=http://customer-service:3001
+      - MESSAGE_SERVICE_URL=http://message-service:3002
       - LOG_LEVEL=${LOG_LEVEL:-info}
     depends_on:
       - mattermost

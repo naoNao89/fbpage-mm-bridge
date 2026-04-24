@@ -35,6 +35,8 @@ async fn main() -> Result<()> {
         .context("FACEBOOK_PAGE_ACCESS_TOKEN must be set")?;
     let customer_service_url = std::env::var("CUSTOMER_SERVICE_URL")
         .unwrap_or_else(|_| "http://customer-service:3001".to_string());
+    let message_service_url = std::env::var("MESSAGE_SERVICE_URL")
+        .unwrap_or_else(|_| "http://message-service:3002".to_string());
 
     let http = Client::new();
     let mut mm = MmClient::new(&mattermost_url, &mattermost_username, &mattermost_password);
@@ -72,6 +74,7 @@ async fn main() -> Result<()> {
             &team_id,
             &facebook_page_access_token,
             &customer_service_url,
+            &message_service_url,
             &mut last_poll_at,
         )
         .await
@@ -96,6 +99,7 @@ async fn poll_and_respond(
     team_id: &str,
     fb_token: &str,
     customer_service_url: &str,
+    message_service_url: &str,
     last_poll_at: &mut i64,
 ) -> Result<usize> {
     let channels = mm
@@ -126,13 +130,14 @@ async fn poll_and_respond(
                 continue;
             }
 
-            let psid = match lookup_psid(&channel.name, customer_service_url).await {
-                Ok(p) => p,
-                Err(e) => {
-                    warn!("Could not find PSID for conv {}: {e}", channel.name);
-                    continue;
-                }
-            };
+            let psid =
+                match lookup_psid(&channel.name, message_service_url, customer_service_url).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!("Could not find PSID for conv {}: {e}", channel.name);
+                        continue;
+                    }
+                };
 
             let fb_url =
                 format!("https://graph.facebook.com/v24.0/me/messages?access_token={fb_token}");
@@ -210,7 +215,11 @@ async fn poll_and_respond(
     Ok(processed)
 }
 
-async fn lookup_psid(conversation_id: &str, customer_service_url: &str) -> Result<String> {
+async fn lookup_psid(
+    conversation_id: &str,
+    message_service_url: &str,
+    customer_service_url: &str,
+) -> Result<String> {
     #[derive(Deserialize)]
     struct MsgServiceResponse {
         customer_id: Uuid,
@@ -225,7 +234,7 @@ async fn lookup_psid(conversation_id: &str, customer_service_url: &str) -> Resul
 
     let msg_url = format!(
         "{}/api/messages/conversation/{conversation_id}/customer",
-        customer_service_url.trim_end_matches('/')
+        message_service_url.trim_end_matches('/')
     );
 
     let resp = reqwest::get(&msg_url)
