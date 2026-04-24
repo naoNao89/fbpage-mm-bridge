@@ -142,6 +142,18 @@ pub struct GraphAttachment {
     pub file_url: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphReaction {
+    pub id: String,
+    pub r#type: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReactionsResponse {
+    pub data: Vec<GraphReaction>,
+    pub paging: Option<Paging>,
+}
+
 /// Attachment data (image/video)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphAttachmentData {

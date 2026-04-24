@@ -417,13 +417,13 @@ pub async fn webhook_handler(
                     };
 
                     if let Some(ref eid) = external_id {
-                        if !state.mattermost_client.mark_posted(eid) {
+                        if state.mattermost_client.is_posted(eid).await {
                             continue;
                         }
                     }
 
                     let display_name = customer.name.as_deref().unwrap_or(&conversation_id);
-                    if let Ok(Some(channel_id)) = post_to_mattermost(
+                    let mattermost_post_result = post_to_mattermost(
                         &state,
                         &conversation_id,
                         &msg_text,
@@ -432,8 +432,15 @@ pub async fn webhook_handler(
                         direction,
                         Some(customer_id),
                     )
-                    .await
-                    {
+                    .await;
+
+                    if let Some(ref eid) = external_id {
+                        if mattermost_post_result.is_ok() {
+                            state.mattermost_client.mark_posted(eid);
+                        }
+                    }
+
+                    if let Ok(Some(channel_id)) = mattermost_post_result {
                         if let Err(e) = state.message_client.mark_synced(msg_id, &channel_id).await
                         {
                             warn!("Failed to mark message as synced: {}", e);

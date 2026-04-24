@@ -1774,6 +1774,38 @@ impl MattermostClient {
             });
         }
     }
+
+    pub async fn save_reaction(
+        &self,
+        post_id: &str,
+        emoji_name: &str,
+        user_id: &str,
+    ) -> Result<()> {
+        let auth = self.get_auth_header().await?;
+        let url = format!("{}/api/v4/reactions", self.base_url);
+
+        let payload = serde_json::json!({
+            "post_id": post_id,
+            "emoji_name": emoji_name,
+            "user_id": user_id
+        });
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to save reaction")?;
+
+        if !resp.status().is_success() && resp.status().as_u16() != 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Save reaction failed: {body}"));
+        }
+
+        Ok(())
+    }
 }
 
 // Data types for polling and channel listing

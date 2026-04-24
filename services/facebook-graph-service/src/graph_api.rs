@@ -17,7 +17,8 @@ use tracing::{debug, info, warn};
 use crate::config::Config;
 use crate::db;
 use crate::models::{
-    Conversation, ConversationsResponse, FacebookRateLimitInfo, GraphMessage, MessagesResponse,
+    Conversation, ConversationsResponse, FacebookRateLimitInfo, GraphMessage, GraphReaction,
+    MessagesResponse, ReactionsResponse,
 };
 
 /// Facebook Graph API base URL
@@ -87,6 +88,12 @@ fn build_conversations_url(page_id: &str, access_token: &str) -> String {
 fn build_messages_url(conversation_id: &str, access_token: &str) -> String {
     format!(
         "{GRAPH_API_BASE}/{conversation_id}/messages?fields=id,created_time,from,message,to,attachments{{id,name,mime_type,size,image_data{{url}},video_data{{url}},file_url}}&access_token={access_token}&limit=100"
+    )
+}
+
+fn build_reactions_url(message_id: &str, access_token: &str) -> String {
+    format!(
+        "{GRAPH_API_BASE}/{message_id}/reactions?fields=id,type&access_token={access_token}&limit=100"
     )
 }
 
@@ -765,60 +772,6 @@ pub async fn send_message_to_facebook(
 
     info!(
         "Message sent to Facebook user {}: mid={}",
-        recipient_psid, result.message_id
-    );
-
-    Ok(result.message_id)
-}
-
-/// Send an image attachment to a Facebook user via the Messenger Send API.
-///
-/// `image_url` must be a publicly accessible URL.
-pub async fn send_image_to_facebook(
-    access_token: &str,
-    recipient_psid: &str,
-    image_url: &str,
-) -> Result<String> {
-    let client = Client::new();
-    let url = format!("{GRAPH_API_BASE}/me/messages?access_token={access_token}");
-
-    let payload = serde_json::json!({
-        "recipient": {
-            "id": recipient_psid
-        },
-        "message": {
-            "attachment": {
-                "type": "image",
-                "payload": {
-                    "url": image_url
-                }
-            }
-        }
-    });
-
-    let response = client
-        .post(&url)
-        .json(&payload)
-        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-        .send()
-        .await
-        .context("Failed to send image to Facebook")?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let error_text = response.text().await?;
-        return Err(anyhow::anyhow!(
-            "Facebook Send API (image) failed with {status}: {error_text}"
-        ));
-    }
-
-    let result: SendMessageResponse = response
-        .json()
-        .await
-        .context("Failed to parse Send API image response")?;
-
-    info!(
-        "Image sent to Facebook user {}: mid={}",
         recipient_psid, result.message_id
     );
 

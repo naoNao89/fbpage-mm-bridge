@@ -201,10 +201,7 @@ async fn poll_conversation_new_messages(
 
         match state.message_client.store_message(message_payload).await {
             Ok(msg_resp) => {
-                if !mm
-                    .mark_posted_persistent(&msg.id, conversation_id, &msg.id)
-                    .await
-                {
+                if mm.is_posted(&msg.id).await {
                     continue;
                 }
 
@@ -268,6 +265,7 @@ async fn poll_conversation_new_messages(
                                     if root_id.is_none() {
                                         mm.set_root_id(conversation_id, &post_id);
                                     }
+                                    let _ = mm.mark_posted_persistent(&msg.id, conversation_id, &post_id).await;
                                     mark_message_synced(state, msg_resp.id, &channel_id).await;
                                     posted += 1;
                                 }
@@ -308,6 +306,7 @@ async fn poll_conversation_new_messages(
                                     match retry_result {
                                         Ok(post_id) => {
                                             mm.set_root_id(conversation_id, &post_id);
+                                            let _ = mm.mark_posted_persistent(&msg.id, conversation_id, &post_id).await;
                                             mark_message_synced(state, msg_resp.id, &channel_id)
                                                 .await;
                                             posted += 1;
@@ -322,6 +321,7 @@ async fn poll_conversation_new_messages(
                                                 .await
                                             {
                                                 mm.set_root_id(conversation_id, &post_id);
+                                                let _ = mm.mark_posted_persistent(&msg.id, conversation_id, &post_id).await;
                                                 mark_message_synced(
                                                     state,
                                                     msg_resp.id,
@@ -344,6 +344,7 @@ async fn poll_conversation_new_messages(
                                         if root_id.is_none() {
                                             mm.set_root_id(conversation_id, &post_id);
                                         }
+                                        let _ = mm.mark_posted_persistent(&msg.id, conversation_id, &post_id).await;
                                         mark_message_synced(state, msg_resp.id, &channel_id).await;
                                         posted += 1;
                                     }
@@ -369,6 +370,7 @@ async fn poll_conversation_new_messages(
                                 if root_id.is_none() {
                                     mm.set_root_id(conversation_id, &post_id);
                                 }
+                                let _ = mm.mark_posted_persistent(&msg.id, conversation_id, &post_id).await;
                                 mark_message_synced(state, msg_resp.id, &channel_id).await;
                                 posted += 1;
                             }
@@ -402,6 +404,7 @@ async fn poll_conversation_new_messages(
                             if root_id.is_none() {
                                 mm.set_root_id(conversation_id, &post_id);
                             }
+                            let _ = mm.mark_posted_persistent(&msg.id, conversation_id, &post_id).await;
                             mark_message_synced(state, msg_resp.id, &channel_id).await;
                             posted += 1;
                         }
