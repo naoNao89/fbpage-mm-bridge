@@ -2554,12 +2554,19 @@ pub async fn update_all_avatars(
     for bot in &bot_users {
         let psid = bot.username.strip_prefix("fb-").unwrap_or(&bot.username);
 
+        info!("Checking avatar for bot {} (PSID: {})", bot.username, psid);
+
         match graph_api::get_profile_picture(psid, fb_token).await {
             Ok(picture) => {
+                info!("Profile picture response for {}: is_silhouette={}, url={}",
+                    bot.username, picture.data.is_silhouette, picture.data.url);
+
                 if picture.data.is_silhouette {
                     info!("Bot {} has no profile picture (silhouette), skipping", bot.username);
                     continue;
                 }
+
+                info!("Attempting to set avatar for bot {} from URL: {}", bot.username, picture.data.url);
 
                 match mm.set_user_profile_image(&bot.id, &picture.data.url).await {
                     Ok(()) => {

@@ -1825,36 +1825,49 @@ impl MattermostClient {
         let auth = self.get_auth_header().await?;
 
         let client = reqwest::Client::new();
+
         let image_response = client
             .get(image_url)
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .header("Accept", "image/png,image/jpeg,image/*")
             .send()
             .await
-            .context("Failed to download profile image")?;
+            .context(format!("Failed to download profile image from {}", image_url))?;
 
         if !image_response.status().is_success() {
+            let status = image_response.status();
+            let body = image_response.text().await.unwrap_or_default();
+            tracing::warn!("Profile image download failed for user {}: status={}, url={}, body_len={}",
+                user_id, status, image_url, body.len());
             return Err(anyhow::anyhow!(
-                "Failed to download profile image: {}",
-                image_response.status()
+                "Failed to download profile image from {}: status={}, body={}",
+                image_url, status, body
             ));
         }
 
+        let content_type = image_response.headers().get("content-type").cloned();
         let image_bytes = image_response
             .bytes()
             .await
             .context("Failed to read image data")?;
 
-        let form = reqwest::multipart::Form::new()
-            .part(
-                "image",
+        tracing::debug!(
+            "Downloaded profile image for user {}: {} bytes, content-type={:?}",
+            user_id,
+            image_bytes.len(),
+            content_type
+        );
+
+        let image_part = reqwest::multipart::Part::bytes(image_bytes.to_vec())
+            .file_name("avatar.png")
+            .mime_str("image/png")
+            .unwrap_or_else(|_| {
                 reqwest::multipart::Part::bytes(image_bytes.to_vec())
-                    .file_name("avatar.png")
-                    .mime_str("image/png")
-                    .unwrap_or_else(|_| {
-                        reqwest::multipart::Part::bytes(image_bytes.to_vec())
-                            .file_name("avatar")
-                    }),
-            );
+                    .file_name("avatar")
+            });
+
+        let form = reqwest::multipart::Form::new().part("image", image_part);
 
         let url = format!("{}/api/v4/users/{}/image", self.base_url, user_id);
         let resp = self
@@ -1866,11 +1879,17 @@ impl MattermostClient {
             .await
             .context("Failed to upload profile image to Mattermost")?;
 
-        if !resp.status().is_success() {
+        let resp_status = resp.status();
+        if !resp_status.is_success() {
             let body = resp.text().await.unwrap_or_default();
+            tracing::warn!(
+                "Failed to upload profile image for user {} to Mattermost: status={}, body={}",
+                user_id, resp_status, body
+            );
             return Err(anyhow::anyhow!("Set profile image failed: {body}"));
         }
 
+        tracing::info!("Successfully set profile image for user {}", user_id);
         Ok(())
     }
 

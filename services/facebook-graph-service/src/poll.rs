@@ -24,13 +24,21 @@ async fn set_customer_avatar_if_needed(
     let mm = mm.clone();
 
     tokio::spawn(async move {
-        if let Ok(picture) = crate::graph_api::get_profile_picture(&psid, &fb_token).await {
-            if !picture.data.is_silhouette {
+        match crate::graph_api::get_profile_picture(&psid, &fb_token).await {
+            Ok(picture) => {
+                if picture.data.is_silhouette {
+                    info!("Poller: PSID {} has silhouette, skipping avatar", psid);
+                    return;
+                }
+                info!("Poller: Setting avatar for bot {} from URL: {}", bot_user_id, picture.data.url);
                 if let Err(e) = mm.set_user_profile_image(&bot_user_id, &picture.data.url).await {
                     warn!("Failed to set profile picture for bot {}: {}", bot_user_id, e);
                 } else {
                     info!("Set profile picture for bot {}", bot_user_id);
                 }
+            }
+            Err(e) => {
+                warn!("Failed to get profile picture for PSID {}: {}", psid, e);
             }
         }
     });
