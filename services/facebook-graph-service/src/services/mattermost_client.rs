@@ -1911,6 +1911,8 @@ impl MattermostClient {
             username: String,
             #[serde(default)]
             is_bot: bool,
+            #[serde(default)]
+            bot_description: String,
         }
 
         let users: Vec<UserInfo> = serde_json::from_str(&body_text).context(format!(
@@ -1921,10 +1923,16 @@ impl MattermostClient {
 
         let bot_users: Vec<BotUserInfo> = users
             .into_iter()
-            .filter(|u| u.is_bot)
-            .map(|u| BotUserInfo {
-                id: u.id,
-                username: u.username,
+            .filter(|u| u.is_bot && u.bot_description.contains("FB Page customer PSID:"))
+            .map(|u| {
+                let psid = u.bot_description
+                    .strip_prefix("FB Page customer PSID: ")
+                    .unwrap_or(&u.username)
+                    .to_string();
+                BotUserInfo {
+                    id: u.id,
+                    username: psid,
+                }
             })
             .collect();
 
