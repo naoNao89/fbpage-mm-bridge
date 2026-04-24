@@ -33,20 +33,20 @@ impl MattermostDbClient {
         Ok(Self { pool })
     }
 
-    /// Archive a channel by setting delete_at timestamp
+    /// Archive a channel by setting deleteat timestamp
     ///
-    /// In Mattermost, archived channels have delete_at > 0
-    pub async fn archive_channel(&self, channel_id: &str) -> Result<()> {
+    /// In Mattermost, archived channels have deleteat > 0
+    pub async fn archive_channel(&self, channelid: &str) -> Result<()> {
         let now = chrono::Utc::now().timestamp_millis();
         let affected = sqlx::query(
             r#"
             UPDATE channels
-            SET delete_at = $1, update_at = $1
-            WHERE id = $2 AND delete_at = 0
+            SET deleteat = $1, updateat = $1
+            WHERE id = $2 AND deleteat = 0
             "#,
         )
         .bind(now)
-        .bind(channel_id)
+        .bind(channelid)
         .execute(&self.pool)
         .await
         .context("Failed to archive channel")?;
@@ -54,59 +54,59 @@ impl MattermostDbClient {
         if affected.rows_affected() == 0 {
             // Check if channel exists
             let exists: Option<(String, i64)> = sqlx::query_as(
-                "SELECT id, delete_at FROM channels WHERE id = $1"
+                "SELECT id, deleteat FROM channels WHERE id = $1"
             )
-            .bind(channel_id)
+            .bind(channelid)
             .fetch_optional(&self.pool)
             .await?;
 
             match exists {
-                Some((_, delete_at)) if delete_at > 0 => {
-                    tracing::info!("Channel {channel_id} is already archived");
+                Some((_, deleteat)) if deleteat > 0 => {
+                    tracing::info!("Channel {channelid} is already archived");
                 }
                 None => {
-                    return Err(anyhow::anyhow!("Channel {channel_id} not found"));
+                    return Err(anyhow::anyhow!("Channel {channelid} not found"));
                 }
                 _ => {}
             }
         } else {
-            tracing::info!("Archived channel {channel_id}");
+            tracing::info!("Archived channel {channelid}");
         }
 
         Ok(())
     }
 
-    /// Unarchive a channel by clearing delete_at
-    pub async fn unarchive_channel(&self, channel_id: &str) -> Result<()> {
+    /// Unarchive a channel by clearing deleteat
+    pub async fn unarchive_channel(&self, channelid: &str) -> Result<()> {
         let affected = sqlx::query(
             r#"
             UPDATE channels
-            SET delete_at = 0, update_at = $1
-            WHERE id = $2 AND delete_at > 0
+            SET deleteat = 0, updateat = $1
+            WHERE id = $2 AND deleteat > 0
             "#,
         )
         .bind(chrono::Utc::now().timestamp_millis())
-        .bind(channel_id)
+        .bind(channelid)
         .execute(&self.pool)
         .await
         .context("Failed to unarchive channel")?;
 
         if affected.rows_affected() == 0 {
             return Err(anyhow::anyhow!(
-                "Channel {channel_id} not found or not archived"
+                "Channel {channelid} not found or not archived"
             ));
         }
 
-        tracing::info!("Unarchived channel {channel_id}");
+        tracing::info!("Unarchived channel {channelid}");
         Ok(())
     }
 
     /// Get channel info from database
-    pub async fn get_channel(&self, channel_id: &str) -> Result<Option<ChannelDbInfo>> {
+    pub async fn get_channel(&self, channelid: &str) -> Result<Option<ChannelDbInfo>> {
         let channel = sqlx::query_as::<_, ChannelDbInfo>(
-            "SELECT id, name, display_name, type, team_id, delete_at FROM channels WHERE id = $1",
+            "SELECT id, name, displayname, type, teamid, deleteat FROM channels WHERE id = $1",
         )
-        .bind(channel_id)
+        .bind(channelid)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -116,7 +116,7 @@ impl MattermostDbClient {
     /// Find a channel by name
     pub async fn find_channel_by_name(&self, name: &str) -> Result<Option<ChannelDbInfo>> {
         let channel = sqlx::query_as::<_, ChannelDbInfo>(
-            "SELECT id, name, display_name, type, team_id, delete_at FROM channels WHERE name = $1",
+            "SELECT id, name, displayname, type, teamid, deleteat FROM channels WHERE name = $1",
         )
         .bind(name)
         .fetch_optional(&self.pool)
@@ -132,21 +132,21 @@ impl MattermostDbClient {
     /// - The IDs are sorted to ensure consistent naming
     pub async fn get_or_create_dm_channel(
         &self,
-        user_id_1: &str,
-        user_id_2: &str,
+        userid_1: &str,
+        userid_2: &str,
     ) -> Result<String> {
         // Sort user IDs to ensure consistent channel name
-        let (id1, id2) = if user_id_1 < user_id_2 {
-            (user_id_1, user_id_2)
+        let (id1, id2) = if userid_1 < userid_2 {
+            (userid_1, userid_2)
         } else {
-            (user_id_2, user_id_1)
+            (userid_2, userid_1)
         };
 
         let channel_name = format!("__{id1}__{id2}__");
 
         // Try to find existing DM channel
         let existing: Option<ChannelDbInfo> = sqlx::query_as(
-            "SELECT id, name, display_name, type, team_id, delete_at
+            "SELECT id, name, displayname, type, teamid, deleteat
              FROM channels WHERE name = $1 AND type = 'D'",
         )
         .bind(&channel_name)
@@ -154,7 +154,7 @@ impl MattermostDbClient {
         .await?;
 
         if let Some(channel) = existing {
-            if channel.delete_at == 0 {
+            if channel.deleteat == 0 {
                 tracing::debug!("Found existing DM channel: {}", channel.id);
                 return Ok(channel.id);
             } else {
@@ -165,49 +165,49 @@ impl MattermostDbClient {
         }
 
         // Create new DM channel
-        let channel_id = uuid::Uuid::new_v4().to_string();
+        let channelid = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().timestamp_millis();
 
         sqlx::query(
             r#"
-            INSERT INTO channels (id, name, display_name, type, team_id, create_at, update_at, delete_at, header, purpose)
+            INSERT INTO channels (id, name, displayname, type, teamid, createat, updateat, deleteat, header, purpose)
             VALUES ($1, $2, 'Direct Message', 'D', NULL, $3, $3, 0, '', '')
             "#,
         )
-        .bind(&channel_id)
+        .bind(&channelid)
         .bind(&channel_name)
         .bind(now)
         .execute(&self.pool)
         .await
         .context("Failed to create DM channel")?;
 
-        tracing::info!("Created DM channel {channel_id} between {id1} and {id2}");
-        Ok(channel_id)
+        tracing::info!("Created DM channel {channelid} between {id1} and {id2}");
+        Ok(channelid)
     }
 
     /// Add a user to a DM channel
     pub async fn add_user_to_dm_channel(
         &self,
-        channel_id: &str,
-        user_id: &str,
+        channelid: &str,
+        userid: &str,
     ) -> Result<()> {
         let now = chrono::Utc::now().timestamp_millis();
 
         sqlx::query(
             r#"
-            INSERT INTO channelmembers (channel_id, user_id, roles, last_viewed_at, msg_count, mention_count)
+            INSERT INTO channelmembers (channelid, userid, roles, lastviewedat, msgcount, mention_count)
             VALUES ($1, $2, 'channel_user', $3, 0, 0)
-            ON CONFLICT (channel_id, user_id) DO NOTHING
+            ON CONFLICT (channelid, userid) DO NOTHING
             "#,
         )
-        .bind(channel_id)
-        .bind(user_id)
+        .bind(channelid)
+        .bind(userid)
         .bind(now)
         .execute(&self.pool)
         .await
         .context("Failed to add user to DM channel")?;
 
-        tracing::debug!("Added user {user_id} to DM channel {channel_id}");
+        tracing::debug!("Added user {userid} to DM channel {channelid}");
         Ok(())
     }
 
@@ -216,8 +216,8 @@ impl MattermostDbClient {
     /// This bypasses all API restrictions and webhook limitations.
     pub async fn send_message(
         &self,
-        channel_id: &str,
-        user_id: &str,
+        channelid: &str,
+        userid: &str,
         message: &str,
     ) -> Result<String> {
         let post_id = uuid::Uuid::new_v4().to_string();
@@ -225,13 +225,13 @@ impl MattermostDbClient {
 
         sqlx::query(
             r#"
-            INSERT INTO posts (id, channel_id, user_id, message, create_at, update_at, delete_at, root_id, props)
+            INSERT INTO posts (id, channelid, userid, message, createat, updateat, deleteat, rootid, props)
             VALUES ($1, $2, $3, $4, $5, $5, 0, NULL, '{}')
             "#,
         )
         .bind(&post_id)
-        .bind(channel_id)
-        .bind(user_id)
+        .bind(channelid)
+        .bind(userid)
         .bind(message)
         .bind(now)
         .execute(&self.pool)
@@ -239,15 +239,15 @@ impl MattermostDbClient {
         .context("Failed to insert post")?;
 
         sqlx::query(
-            "UPDATE channels SET last_post_at = $1 WHERE id = $2",
+            "UPDATE channels SET lastpostat = $1 WHERE id = $2",
         )
         .bind(now)
-        .bind(channel_id)
+        .bind(channelid)
         .execute(&self.pool)
         .await
         .ok();
 
-        tracing::info!("Sent message to channel {channel_id}, post_id: {post_id}");
+        tracing::info!("Sent message to channel {channelid}, post_id: {post_id}");
         Ok(post_id)
     }
 
@@ -256,30 +256,30 @@ impl MattermostDbClient {
     /// This is the primary use case - bots cannot send DMs via API in Team Edition.
     pub async fn send_bot_dm(
         &self,
-        bot_user_id: &str,
-        target_user_id: &str,
+        bot_userid: &str,
+        target_userid: &str,
         message: &str,
     ) -> Result<String> {
         // Get or create DM channel
-        let channel_id = self.get_or_create_dm_channel(bot_user_id, target_user_id).await?;
+        let channelid = self.get_or_create_dm_channel(bot_userid, target_userid).await?;
 
         // Add bot to channel if not already member
-        self.add_user_to_dm_channel(&channel_id, bot_user_id).await?;
+        self.add_user_to_dm_channel(&channelid, bot_userid).await?;
 
         // Add target user to channel if not already member
-        self.add_user_to_dm_channel(&channel_id, target_user_id).await?;
+        self.add_user_to_dm_channel(&channelid, target_userid).await?;
 
         // Send the message as the bot
-        let post_id = self.send_message(&channel_id, bot_user_id, message).await?;
+        let post_id = self.send_message(&channelid, bot_userid, message).await?;
 
         tracing::info!(
-            "Bot {bot_user_id} sent DM to {target_user_id}, post_id: {post_id}"
+            "Bot {bot_userid} sent DM to {target_userid}, post_id: {post_id}"
         );
         Ok(post_id)
     }
 
     /// Get user ID by username
-    pub async fn get_user_id_by_username(&self, username: &str) -> Result<Option<String>> {
+    pub async fn get_userid_by_username(&self, username: &str) -> Result<Option<String>> {
         let user: Option<(String,)> = sqlx::query_as(
             "SELECT id FROM users WHERE username = $1",
         )
@@ -293,8 +293,8 @@ impl MattermostDbClient {
     /// List all archived channels
     pub async fn list_archived_channels(&self) -> Result<Vec<ChannelDbInfo>> {
         let channels = sqlx::query_as::<_, ChannelDbInfo>(
-            "SELECT id, name, display_name, type, team_id, delete_at
-             FROM channels WHERE delete_at > 0 ORDER BY delete_at DESC",
+            "SELECT id, name, displayname, type, teamid, deleteat
+             FROM channels WHERE deleteat > 0 ORDER BY deleteat DESC",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -307,8 +307,8 @@ impl MattermostDbClient {
         let channels = match prefix {
             Some(p) => {
                 sqlx::query_as::<_, ChannelDbInfo>(
-                    "SELECT id, name, display_name, type, team_id, delete_at
-                     FROM channels WHERE delete_at = 0 AND name LIKE $1 ORDER BY name",
+                    "SELECT id, name, displayname, type, teamid, deleteat
+                     FROM channels WHERE deleteat = 0 AND name LIKE $1 ORDER BY name",
                 )
                 .bind(format!("{p}%"))
                 .fetch_all(&self.pool)
@@ -316,8 +316,8 @@ impl MattermostDbClient {
             }
             None => {
                 sqlx::query_as::<_, ChannelDbInfo>(
-                    "SELECT id, name, display_name, type, team_id, delete_at
-                     FROM channels WHERE delete_at = 0 ORDER BY name",
+                    "SELECT id, name, displayname, type, teamid, deleteat
+                     FROM channels WHERE deleteat = 0 ORDER BY name",
                 )
                 .fetch_all(&self.pool)
                 .await?
@@ -333,10 +333,10 @@ impl MattermostDbClient {
 pub struct ChannelDbInfo {
     pub id: String,
     pub name: String,
-    pub display_name: String,
+    pub displayname: String,
     pub r#type: String,  // O=public, P=private, D=direct
-    pub team_id: Option<String>,
-    pub delete_at: i64,  // > 0 means archived
+    pub teamid: Option<String>,
+    pub deleteat: i64,  // > 0 means archived
 }
 
 #[cfg(test)]
