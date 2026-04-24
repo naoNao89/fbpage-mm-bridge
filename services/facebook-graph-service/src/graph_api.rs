@@ -18,7 +18,7 @@ use crate::config::Config;
 use crate::db;
 use crate::models::{
     Conversation, ConversationsResponse, FacebookRateLimitInfo, GraphMessage, GraphReaction,
-    MessagesResponse, ReactionsResponse,
+    MessagesResponse, ProfilePictureResponse, ReactionsResponse,
 };
 
 /// Facebook Graph API base URL
@@ -94,6 +94,12 @@ fn build_messages_url(conversation_id: &str, access_token: &str) -> String {
 fn build_reactions_url(message_id: &str, access_token: &str) -> String {
     format!(
         "{GRAPH_API_BASE}/{message_id}/reactions?fields=id,type&access_token={access_token}&limit=100"
+    )
+}
+
+fn build_profile_picture_url(user_id: &str, access_token: &str) -> String {
+    format!(
+        "{GRAPH_API_BASE}/{user_id}/picture?redirect=false&type=large&access_token={access_token}"
     )
 }
 
@@ -654,6 +660,36 @@ pub async fn get_conversation_messages(
     );
 
     Ok(all_messages)
+}
+
+pub async fn get_profile_picture(
+    user_id: &str,
+    access_token: &str,
+) -> Result<ProfilePictureResponse> {
+    let client = Client::new();
+    let url = build_profile_picture_url(user_id, access_token);
+
+    let response = client
+        .get(&url)
+        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .send()
+        .await
+        .context("Failed to fetch profile picture")?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await?;
+        return Err(anyhow::anyhow!(
+            "Profile picture API failed with {status}: {error_text}"
+        ));
+    }
+
+    let picture_response: ProfilePictureResponse = response
+        .json()
+        .await
+        .context("Failed to parse profile picture response")?;
+
+    Ok(picture_response)
 }
 
 // Token Operations

@@ -2,10 +2,13 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::Deserialize;
+
+const REQUEST_TIMEOUT_SECS: u64 = 30;
 use sqlx::PgPool;
 
 /// Lightweight representations for API responses
@@ -1802,6 +1805,63 @@ impl MattermostClient {
         if !resp.status().is_success() && resp.status().as_u16() != 400 {
             let body = resp.text().await.unwrap_or_default();
             return Err(anyhow::anyhow!("Save reaction failed: {body}"));
+        }
+
+        Ok(())
+    }
+
+    pub async fn set_user_profile_image(
+        &self,
+        user_id: &str,
+        image_url: &str,
+    ) -> Result<()> {
+        let auth = self.get_auth_header().await?;
+
+        let client = reqwest::Client::new();
+        let image_response = client
+            .get(image_url)
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .send()
+            .await
+            .context("Failed to download profile image")?;
+
+        if !image_response.status().is_success() {
+            return Err(anyhow::anyhow!(
+                "Failed to download profile image: {}",
+                image_response.status()
+            ));
+        }
+
+        let image_bytes = image_response
+            .bytes()
+            .await
+            .context("Failed to read image data")?;
+
+        let form = reqwest::multipart::Form::new()
+            .part(
+                "image",
+                reqwest::multipart::Part::bytes(image_bytes.to_vec())
+                    .file_name("avatar.png")
+                    .mime_str("image/png")
+                    .unwrap_or_else(|_| {
+                        reqwest::multipart::Part::bytes(image_bytes.to_vec())
+                            .file_name("avatar")
+                    }),
+            );
+
+        let url = format!("{}/api/v4/users/{}/image", self.base_url, user_id);
+        let resp = self
+            .client
+            .put(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .multipart(form)
+            .send()
+            .await
+            .context("Failed to upload profile image to Mattermost")?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Set profile image failed: {body}"));
         }
 
         Ok(())
