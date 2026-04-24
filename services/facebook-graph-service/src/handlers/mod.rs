@@ -489,6 +489,22 @@ async fn post_to_mattermost(
                     .await
                 {
                     Ok((bot_user_id, bot_token)) => {
+                        let fb_token = state.config.facebook_page_access_token.clone();
+                        let psid = psid.to_string();
+                        let bot_uid = bot_user_id.clone();
+                        let mm_clone = mm.clone();
+                        tokio::spawn(async move {
+                            if let Ok(picture) = crate::graph_api::get_profile_picture(&psid, &fb_token).await {
+                                if !picture.data.is_silhouette {
+                                    if let Err(e) = mm_clone.set_user_profile_image(&bot_uid, &picture.data.url).await {
+                                        warn!("Failed to set profile picture for bot {}: {}", bot_uid, e);
+                                    } else {
+                                        info!("Set profile picture for bot {}", bot_uid);
+                                    }
+                                }
+                            }
+                        });
+
                         let root = if let Some(r) = root_id {
                             Some(r.to_string())
                         } else {

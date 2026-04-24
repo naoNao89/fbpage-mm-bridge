@@ -12,6 +12,30 @@ async fn mark_message_synced(state: &AppState, msg_id: Uuid, channel_id: &str) {
     }
 }
 
+async fn set_customer_avatar_if_needed(
+    state: &AppState,
+    mm: &crate::services::MattermostClient,
+    psid: &str,
+    bot_user_id: &str,
+) {
+    let fb_token = state.config.facebook_page_access_token.clone();
+    let psid = psid.to_string();
+    let bot_user_id = bot_user_id.to_string();
+    let mm = mm.clone();
+
+    tokio::spawn(async move {
+        if let Ok(picture) = crate::graph_api::get_profile_picture(&psid, &fb_token).await {
+            if !picture.data.is_silhouette {
+                if let Err(e) = mm.set_user_profile_image(&bot_user_id, &picture.data.url).await {
+                    warn!("Failed to set profile picture for bot {}: {}", bot_user_id, e);
+                } else {
+                    info!("Set profile picture for bot {}", bot_user_id);
+                }
+            }
+        }
+    });
+}
+
 pub async fn run_poller(state: AppState, interval_secs: u64) {
     let mut last_poll_ts = chrono::Utc::now() - chrono::Duration::seconds(interval_secs as i64 * 2);
 
@@ -218,6 +242,7 @@ async fn poll_conversation_new_messages(
                         .await
                     {
                         Ok((bot_uid, bot_token)) => {
+                            set_customer_avatar_if_needed(state, mm, &cust_id, &bot_uid).await;
                             let (msg_text, file_ids) = if !attachments.is_empty() {
                                 crate::media::process_attachments_for_post(
                                     state,
