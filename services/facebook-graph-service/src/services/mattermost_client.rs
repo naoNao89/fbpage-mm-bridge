@@ -1905,12 +1905,7 @@ impl MattermostClient {
         tracing::debug!("Users response body length: {} bytes", body_text.len());
         tracing::debug!("Users response body preview: {}", &body_text[..body_text.len().min(500)]);
 
-        #[derive(Debug, Deserialize)]
-        struct UsersResponse {
-            #[serde(rename = "users")]
-            users: Vec<UserInfo>,
-        }
-
+        // Mattermost returns users as a direct array, not {"users": [...]}
         #[derive(Debug, Deserialize)]
         struct UserInfo {
             id: String,
@@ -1921,14 +1916,13 @@ impl MattermostClient {
             last_name: Option<String>,
         }
 
-        let users_response: UsersResponse = serde_json::from_str(&body_text).context(format!(
+        let users: Vec<UserInfo> = serde_json::from_str(&body_text).context(format!(
             "Failed to parse users response. Body preview: {}",
             &body_text[..body_text.len().min(300)]
         ))?;
-        let total_users = users_response.users.len();
+        let total_users = users.len();
 
-        let bot_users: Vec<BotUserInfo> = users_response
-            .users
+        let bot_users: Vec<BotUserInfo> = users
             .into_iter()
             .filter(|u| u.username.starts_with("fb-"))
             .map(|u| BotUserInfo {
