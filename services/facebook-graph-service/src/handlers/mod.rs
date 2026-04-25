@@ -2532,6 +2532,7 @@ pub struct UpdateAvatarsResult {
     pub total: usize,
     pub updated: usize,
     pub failed: usize,
+    pub skipped: usize,
     pub errors: Vec<String>,
 }
 
@@ -2547,53 +2548,78 @@ pub async fn update_all_avatars(
 
     let mut updated = 0;
     let mut failed = 0;
+    let mut skipped = 0;
     let mut errors = Vec::new();
 
     info!("Updating avatars for {} bot users", bot_users.len());
 
-    for bot in &bot_users {
-        let psid = bot.username.strip_prefix("fb-").unwrap_or(&bot.username);
+    let psids: Vec<String> = bot_users
+        .iter()
+        .map(|bot| bot.username.strip_prefix("fb-").unwrap_or(&bot.username).to_string())
+        .collect();
 
-        info!("Checking avatar for bot {} (PSID: {})", bot.username, psid);
+    info!("Fetching profile pictures for {} PSIDs in batch", psids.len());
 
-        match graph_api::get_profile_picture(psid, fb_token).await {
-            Ok(picture) => {
-                info!("Profile picture response for {}: is_silhouette={}, url={}",
-                    bot.username, picture.data.is_silhouette, picture.data.url);
+    match graph_api::get_profile_pictures_batch(&psids, fb_token).await {
+        Ok(results) => {
+            info!("Got batch profile picture results: {} PSIDs", results.len());
 
-                if picture.data.is_silhouette {
-                    info!("Bot {} has no profile picture (silhouette), skipping", bot.username);
-                    continue;
-                }
+            for bot in &bot_users {
+                let psid = bot.username.strip_prefix("fb-").unwrap_or(&bot.username);
 
-                info!("Attempting to set avatar for bot {} from URL: {}", bot.username, picture.data.url);
+                match results.get(psid) {
+                    Some(Ok(picture_data)) => {
+                        if picture_data.is_silhouette {
+                            info!("Bot {} has no profile picture (silhouette), skipping", bot.username);
+                            skipped += 1;
+                            continue;
+                        }
 
-                match mm.set_user_profile_image(&bot.id, &picture.data.url).await {
-                    Ok(()) => {
-                        info!("Updated avatar for bot {} ({})", bot.username, bot.id);
-                        updated += 1;
+                        info!("Setting avatar for bot {} from URL: {}", bot.username, picture_data.url);
+
+                        match mm.set_user_profile_image(&bot.id, &picture_data.url).await {
+                            Ok(()) => {
+                                info!("Updated avatar for bot {} ({})", bot.username, bot.id);
+                                updated += 1;
+                            }
+                            Err(e) => {
+                                warn!("Failed to set avatar for bot {}: {}", bot.username, e);
+                                failed += 1;
+                                errors.push(format!("{}: set avatar failed: {}", bot.username, e));
+                            }
+                        }
                     }
-                    Err(e) => {
-                        warn!("Failed to set avatar for bot {}: {}", bot.username, e);
+                    Some(Err(e)) => {
+                        warn!("Failed to get profile picture for bot {}: {}", bot.username, e);
                         failed += 1;
                         errors.push(format!("{}: {}", bot.username, e));
                     }
+                    None => {
+                        warn!("No profile picture result for bot {} (PSID: {})", bot.username, psid);
+                        failed += 1;
+                        errors.push(format!("{}: no result returned", bot.username));
+                    }
                 }
-            }
-            Err(e) => {
-                warn!("Failed to get profile picture for bot {}: {}", bot.username, e);
-                failed += 1;
-                errors.push(format!("{}: {}", bot.username, e));
+
+                tokio::time::sleep(Duration::from_millis(200)).await;
             }
         }
-
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        Err(e) => {
+            warn!("Batch profile picture fetch failed: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Batch fetch failed: {}", e)));
+        }
     }
+
+    let skipped = 0;
+
+    info!("Avatar update complete: total={}, updated={}, failed={}, skipped={}", 
+        bot_users.len(), updated, failed, skipped);
 
     Ok(Json(UpdateAvatarsResult {
         total: bot_users.len(),
         updated,
         failed,
+        skipped,
         errors,
     }))
 }
