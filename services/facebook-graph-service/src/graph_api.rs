@@ -706,36 +706,35 @@ pub async fn get_profile_pictures_batch(
     let mut results = std::collections::HashMap::new();
 
     for chunk in psids.chunks(batch_size) {
-        let mut batch_requests: Vec<serde_json::Value> = chunk
+        let batch_requests: Vec<serde_json::Value> = chunk
             .iter()
             .map(|psid| {
                 serde_json::json!({
                     "method": "GET",
-                    "relative_url": format!("{}/picture?redirect=false&type=large&access_token={}", psid, access_token),
-                    "name": psid.clone(),
-                    "body": ""
+                    "relative_url": format!("{}/picture?redirect=false&type=large", psid),
                 })
             })
             .collect();
 
-        let batch_payload = serde_json::json!({
-            "batch": batch_requests
-        });
+        let mut batch_payload = serde_json::Map::new();
+        batch_payload.insert("batch".to_string(), serde_json::Value::Array(batch_requests));
+        batch_payload.insert("include_headers".to_string(), serde_json::Value::Bool(true));
 
-        let url = format!("{}/", GRAPH_API_BASE);
+        let url = format!("{}/?access_token={}", GRAPH_API_BASE, access_token);
         let resp = client
             .post(&url)
             .header("Content-Type", "application/json")
             .timeout(Duration::from_secs(60))
-            .body(batch_payload.to_string())
+            .body(serde_json::to_string(&batch_payload).unwrap())
             .send()
             .await
             .context("Failed to send batch profile picture request")?;
 
         if !resp.status().is_success() {
+            let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             for psid in chunk {
-                results.insert(psid.clone(), Err(format!("Batch request failed: {}", body)));
+                results.insert(psid.clone(), Err(format!("Batch HTTP failed: {} - {}", status, body)));
             }
             continue;
         }
@@ -743,8 +742,20 @@ pub async fn get_profile_pictures_batch(
         let body_text = resp.text().await.context("Failed to read batch response")?;
 
         let batch_results: Vec<serde_json::Value> = match serde_json::from_str::<serde_json::Value>(&body_text) {
-            Ok(v) if v.is_array() => v.as_array().unwrap().clone(),
-            Ok(v) => return Err(anyhow::anyhow!("Batch response was not an array: {}", serde_json::to_string_pretty(&v).unwrap_or_default())),
+            Ok(v) => {
+                if let Some(arr) = v.as_array() {
+                    arr.clone()
+                } else {
+                    let err_msg = v.get("error")
+                        .and_then(|e| e.get("message"))
+                        .map(|m| m.as_str().unwrap_or("Unknown batch error"))
+                        .unwrap_or("Unknown error");
+                    for psid in chunk {
+                        results.insert(psid.clone(), Err(format!("Batch failed: {}", err_msg)));
+                    }
+                    continue;
+                }
+            }
             Err(e) => {
                 for psid in chunk {
                     results.insert(psid.clone(), Err(format!("Failed to parse batch response: {}", e)));
@@ -756,10 +767,11 @@ pub async fn get_profile_pictures_batch(
         for (i, psid) in chunk.iter().enumerate() {
             if i < batch_results.len() {
                 let item = &batch_results[i];
-                let code = item.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
-                if code == 200 {
-                    if let Some(body_obj) = item.get("body") {
-                        match serde_json::from_value::<ProfilePictureResponse>(body_obj.clone()) {
+                let code = item.get("code").and_then(|c| c.as_i64()).unwrap_or(200);
+                if code >= 200 && code < 300 {
+                    let body_obj = item.get("body").or_else(|| item.get("response"));
+                    if let Some(body) = body_obj {
+                        match serde_json::from_value::<ProfilePictureResponse>(body.clone()) {
                             Ok(pic_resp) => {
                                 results.insert(psid.clone(), Ok(pic_resp.data));
                             }
@@ -772,7 +784,7 @@ pub async fn get_profile_pictures_batch(
                     }
                 } else {
                     let error_msg = item.get("body")
-                        .and_then(|b| b.get("error"))
+                        .or_else(|| item.get("error"))
                         .and_then(|e| e.get("message"))
                         .map(|m| m.as_str().unwrap_or("Unknown error"))
                         .unwrap_or("Unknown error");
