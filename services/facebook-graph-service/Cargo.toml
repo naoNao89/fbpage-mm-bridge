@@ -25,6 +25,7 @@ tracing-subscriber = { workspace = true }
 minio = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
+shared-utils = { workspace = true }
 
 [dev-dependencies]
 wiremock = { workspace = true }

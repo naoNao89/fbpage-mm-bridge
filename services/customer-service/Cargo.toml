@@ -21,6 +21,7 @@ thiserror = { workspace = true }
 dotenvy = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+shared-utils = { workspace = true }
 
 [dev-dependencies]
 wiremock = { workspace = true }

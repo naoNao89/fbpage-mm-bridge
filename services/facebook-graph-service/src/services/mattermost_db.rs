@@ -9,7 +9,7 @@
 //! Use with caution and always backup your database before operations.
 
 use anyhow::{Context, Result};
-use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::PgPool;
 
 /// Mattermost database client for direct operations
 #[derive(Clone)]
@@ -23,9 +23,7 @@ impl MattermostDbClient {
     /// Connection string format:
     /// `postgres://user:password@host:5432/mattermost`
     pub async fn new(database_url: &str, max_connections: u32) -> Result<Self> {
-        let pool = PgPoolOptions::new()
-            .max_connections(max_connections)
-            .connect(database_url)
+        let pool = shared_utils::create_pg_pool(database_url, max_connections)
             .await
             .context("Failed to connect to Mattermost database")?;
 
