@@ -18,7 +18,7 @@ if [ ! -d "$STACK_DIR/.git" ]; then
 else
   cd "$STACK_DIR"
   git fetch --depth=1 origin "$BRANCH"
-  git reset --hard FETCH_HEAD
+  git checkout -B "$BRANCH" FETCH_HEAD
 fi
 cd "$STACK_DIR"
 
