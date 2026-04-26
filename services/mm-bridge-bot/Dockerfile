@@ -38,7 +38,7 @@ COPY services/mm-bridge-bot/src services/mm-bridge-bot/src
 COPY services/shared-utils/src services/shared-utils/src
 
 # Touch the file to break cargo cache so it recompiles with real code
-RUN touch services/mm-bridge-bot/src/main.rs
+RUN touch services/mm-bridge-bot/src/main.rs services/shared-utils/src/lib.rs
 
 # Rebuild with real source
 RUN cargo build --release --package mm-bridge-bot

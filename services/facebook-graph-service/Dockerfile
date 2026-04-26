@@ -31,7 +31,7 @@ COPY services/facebook-graph-service/src services/facebook-graph-service/src
 COPY services/facebook-graph-service/migrations services/facebook-graph-service/migrations
 COPY services/shared-utils/src services/shared-utils/src
 
-RUN touch services/facebook-graph-service/src/main.rs
+RUN touch services/facebook-graph-service/src/main.rs services/shared-utils/src/lib.rs
 
 RUN cargo build --release --package facebook-graph-service
 

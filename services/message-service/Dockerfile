@@ -31,7 +31,7 @@ COPY services/message-service/src services/message-service/src
 COPY services/message-service/migrations services/message-service/migrations
 COPY services/shared-utils/src services/shared-utils/src
 
-RUN touch services/message-service/src/main.rs
+RUN touch services/message-service/src/main.rs services/shared-utils/src/lib.rs
 
 RUN cargo build --release --package message-service
 
