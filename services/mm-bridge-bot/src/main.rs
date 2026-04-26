@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::HashMap, sync::Mutex, time::Duration};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -122,11 +122,13 @@ async fn poll_and_respond(
         }
 
         for post in posts {
-            if post.user_id == mm.bot_user_id {
-                continue;
-            }
+            let author_is_bot = if post.user_id == mm.bot_user_id {
+                false
+            } else {
+                mm.is_bot_user(&post.user_id).await?
+            };
 
-            if post.root_id.is_empty() && post.message.is_empty() && post.file_ids.is_empty() {
+            if !should_forward_post(&post, &mm.bot_user_id, author_is_bot) {
                 continue;
             }
 
@@ -206,10 +208,10 @@ async fn poll_and_respond(
                 }
             }
         }
+    }
 
-        if channel_newest > *last_poll_at {
-            *last_poll_at = channel_newest;
-        }
+    if newest_ts > *last_poll_at {
+        *last_poll_at = newest_ts;
     }
 
     Ok(processed)
@@ -293,6 +295,7 @@ struct MmClient {
     http: Client,
     token: Option<String>,
     bot_user_id: String,
+    bot_user_cache: Mutex<HashMap<String, bool>>,
 }
 
 impl MmClient {
@@ -304,6 +307,7 @@ impl MmClient {
             http: Client::new(),
             token: None,
             bot_user_id: String::new(),
+            bot_user_cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -433,16 +437,73 @@ impl MmClient {
 
         let data: PostsResp = resp.json().await.context("Failed to parse posts")?;
 
-        let mut posts: Vec<Post> = data
-            .order
-            .iter()
-            .filter_map(|id| data.posts.get(id))
-            .cloned()
-            .collect();
-
-        posts.sort_by_key(|p| p.create_at);
-        Ok(posts)
+        Ok(ordered_posts_after_since(&data.order, &data.posts, since))
     }
+
+    async fn is_bot_user(&self, user_id: &str) -> Result<bool> {
+        if let Some(is_bot) = self
+            .bot_user_cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("bot user cache poisoned"))?
+            .get(user_id)
+            .copied()
+        {
+            return Ok(is_bot);
+        }
+
+        let token = self.token.as_ref().context("Not logged in")?;
+        let url = format!("{}/api/v4/users/{user_id}", self.base_url);
+
+        let resp = self
+            .http
+            .get(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+            .context("Failed to fetch Mattermost user")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("User fetch failed {status}: {body}");
+        }
+
+        #[derive(Deserialize)]
+        struct UserResp {
+            #[serde(default)]
+            is_bot: bool,
+        }
+
+        let user: UserResp = resp.json().await.context("Failed to parse user")?;
+        self.bot_user_cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("bot user cache poisoned"))?
+            .insert(user_id.to_string(), user.is_bot);
+
+        Ok(user.is_bot)
+    }
+}
+
+fn should_forward_post(post: &Post, bot_user_id: &str, author_is_bot: bool) -> bool {
+    post.user_id != bot_user_id
+        && !author_is_bot
+        && (!post.root_id.is_empty() || !post.message.is_empty() || !post.file_ids.is_empty())
+}
+
+fn ordered_posts_after_since(
+    order: &[String],
+    posts_by_id: &HashMap<String, Post>,
+    since: i64,
+) -> Vec<Post> {
+    let mut posts: Vec<Post> = order
+        .iter()
+        .filter_map(|id| posts_by_id.get(id))
+        .filter(|post| post.create_at > since)
+        .cloned()
+        .collect();
+
+    posts.sort_by_key(|p| p.create_at);
+    posts
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -505,4 +566,62 @@ async fn get_file_info(mm: &MmClient, file_id: &str) -> Result<FileInfo> {
 
     let info: FileInfo = resp.json().await.context("Failed to parse file info")?;
     Ok(info)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn post(id: &str, user_id: &str, create_at: i64, message: &str) -> Post {
+        Post {
+            id: id.to_string(),
+            user_id: user_id.to_string(),
+            channel_id: "channel".to_string(),
+            message: message.to_string(),
+            root_id: String::new(),
+            create_at,
+            file_ids: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn customer_bot_post_is_not_forwarded_to_facebook() {
+        let post = post(
+            "fuyfqxs3f38udkf9amns3inh7r",
+            "customer-bot",
+            1777081506375,
+            "Hé lu xốp",
+        );
+
+        assert!(!should_forward_post(&post, "admin-user", true));
+    }
+
+    #[test]
+    fn own_admin_post_is_not_forwarded_to_facebook() {
+        let post = post("admin-post", "admin-user", 1777081506376, "internal");
+
+        assert!(!should_forward_post(&post, "admin-user", false));
+    }
+
+    #[test]
+    fn human_non_empty_post_is_forwarded_to_facebook() {
+        let post = post("human-post", "staff-user", 1777081506377, "reply");
+
+        assert!(should_forward_post(&post, "admin-user", false));
+    }
+
+    #[test]
+    fn post_at_since_boundary_is_not_reprocessed() {
+        let boundary = post("boundary", "customer-bot", 1777081506375, "Hé lu xốp");
+        let newer = post("newer", "staff-user", 1777081506376, "reply");
+        let mut posts_by_id = HashMap::new();
+        posts_by_id.insert(boundary.id.clone(), boundary);
+        posts_by_id.insert(newer.id.clone(), newer);
+        let order = vec!["newer".to_string(), "boundary".to_string()];
+
+        let posts = ordered_posts_after_since(&order, &posts_by_id, 1777081506375);
+
+        assert_eq!(posts.len(), 1);
+        assert_eq!(posts[0].id, "newer");
+    }
 }
