@@ -2,10 +2,13 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::Deserialize;
+
+const REQUEST_TIMEOUT_SECS: u64 = 30;
 use sqlx::PgPool;
 
 /// Lightweight representations for API responses
@@ -127,7 +130,12 @@ impl MattermostClient {
 
     /// Login to Mattermost and cache the token
     pub async fn login(&self) -> Result<()> {
+        tracing::info!(
+            "Attempting Mattermost login with username: {}",
+            self.username
+        );
         let url = format!("{}/api/v4/users/login", self.base_url);
+        tracing::debug!("Login URL: {}", url);
         let payload = serde_json::json!({
             "login_id": self.username,
             "password": self.password,
@@ -142,6 +150,7 @@ impl MattermostClient {
             .context("Failed to send login request to Mattermost")?;
 
         let status = resp.status();
+        tracing::info!("Login response status: {}", status);
         let token_from_header = resp
             .headers()
             .get("Token")
@@ -150,6 +159,7 @@ impl MattermostClient {
         let body_text = resp.text().await.unwrap_or_default();
 
         if !status.is_success() {
+            tracing::error!("Mattermost login failed with {}: {}", status, body_text);
             return Err(anyhow::anyhow!(
                 "Mattermost login failed with {status}: {body_text}"
             ));
@@ -167,6 +177,10 @@ impl MattermostClient {
                 )
             })?;
 
+        tracing::info!(
+            "Login successful, token obtained: {}...",
+            &token[..token.len().min(10)]
+        );
         let mut tok = self.token.lock().expect("token lock poisoned");
         *tok = Some(token);
 
@@ -288,10 +302,15 @@ impl MattermostClient {
     /// Get authorization header value, logging in if needed
     pub async fn get_auth_header(&self) -> Result<String> {
         let needs_login = self.token.lock().expect("token lock poisoned").is_none();
+        tracing::debug!("get_auth_header called, needs_login: {}", needs_login);
         if needs_login {
             self.login().await?;
         }
         let token = self.token.lock().expect("token lock poisoned").clone();
+        tracing::debug!(
+            "Token after login/check: {:?}",
+            token.as_ref().map(|t| &t[..t.len().min(10)])
+        );
         token.ok_or_else(|| anyhow::anyhow!("No token after login"))
     }
 
@@ -1774,6 +1793,195 @@ impl MattermostClient {
             });
         }
     }
+
+    pub async fn save_reaction(
+        &self,
+        post_id: &str,
+        emoji_name: &str,
+        user_id: &str,
+    ) -> Result<()> {
+        let auth = self.get_auth_header().await?;
+        let url = format!("{}/api/v4/reactions", self.base_url);
+
+        let payload = serde_json::json!({
+            "post_id": post_id,
+            "emoji_name": emoji_name,
+            "user_id": user_id
+        });
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to save reaction")?;
+
+        if !resp.status().is_success() && resp.status().as_u16() != 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Save reaction failed: {body}"));
+        }
+
+        Ok(())
+    }
+
+    pub async fn set_user_profile_image(&self, user_id: &str, image_url: &str) -> Result<()> {
+        let auth = self.get_auth_header().await?;
+
+        let client = reqwest::Client::new();
+
+        let image_response = client
+            .get(image_url)
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            )
+            .header("Accept", "image/png,image/jpeg,image/*")
+            .send()
+            .await
+            .context(format!("Failed to download profile image from {image_url}"))?;
+
+        if !image_response.status().is_success() {
+            let status = image_response.status();
+            let body = image_response.text().await.unwrap_or_default();
+            tracing::warn!(
+                "Profile image download failed for user {}: status={}, url={}, body_len={}",
+                user_id,
+                status,
+                image_url,
+                body.len()
+            );
+            return Err(anyhow::anyhow!(
+                "Failed to download profile image from {image_url}: status={status}, body={body}"
+            ));
+        }
+
+        let content_type = image_response.headers().get("content-type").cloned();
+        let image_bytes = image_response
+            .bytes()
+            .await
+            .context("Failed to read image data")?;
+
+        tracing::debug!(
+            "Downloaded profile image for user {}: {} bytes, content-type={:?}",
+            user_id,
+            image_bytes.len(),
+            content_type
+        );
+
+        let image_part = reqwest::multipart::Part::bytes(image_bytes.to_vec())
+            .file_name("avatar.png")
+            .mime_str("image/png")
+            .unwrap_or_else(|_| {
+                reqwest::multipart::Part::bytes(image_bytes.to_vec()).file_name("avatar")
+            });
+
+        let form = reqwest::multipart::Form::new().part("image", image_part);
+
+        let url = format!("{}/api/v4/users/{user_id}/image", self.base_url);
+        let resp = self
+            .client
+            .put(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .multipart(form)
+            .send()
+            .await
+            .context("Failed to upload profile image to Mattermost")?;
+
+        let resp_status = resp.status();
+        if !resp_status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            tracing::warn!(
+                "Failed to upload profile image for user {} to Mattermost: status={}, body={}",
+                user_id,
+                resp_status,
+                body
+            );
+            return Err(anyhow::anyhow!("Set profile image failed: {body}"));
+        }
+
+        tracing::info!("Successfully set profile image for user {}", user_id);
+        Ok(())
+    }
+
+    pub async fn get_all_bot_users(&self) -> Result<Vec<BotUserInfo>> {
+        let auth = self.get_auth_header().await?;
+        tracing::debug!(
+            "Got auth token for get_all_bot_users: {}",
+            &auth[..auth.len().min(10)]
+        );
+
+        let url = format!("{}/api/v4/users?per_page=200", self.base_url);
+        tracing::debug!("Fetching users from: {}", url);
+
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await
+            .context("Failed to get users")?;
+
+        tracing::debug!("Users API response status: {}", resp.status());
+        let status = resp.status();
+
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            tracing::error!("Get users failed with status {}: {}", status, body);
+            return Err(anyhow::anyhow!("Get users failed: {body}"));
+        }
+
+        let body_text = resp
+            .text()
+            .await
+            .context("Failed to read users response body")?;
+        tracing::debug!("Users response body length: {} bytes", body_text.len());
+        tracing::debug!(
+            "Users response body preview: {}",
+            &body_text[..body_text.len().min(500)]
+        );
+
+        #[derive(Debug, Deserialize)]
+        struct UserInfo {
+            id: String,
+            username: String,
+            #[serde(default)]
+            is_bot: bool,
+            #[serde(default)]
+            bot_description: String,
+        }
+
+        let users: Vec<UserInfo> = serde_json::from_str(&body_text).context(format!(
+            "Failed to parse users response. Body preview: {}",
+            &body_text[..body_text.len().min(300)]
+        ))?;
+        let total_users = users.len();
+
+        let bot_users: Vec<BotUserInfo> = users
+            .into_iter()
+            .filter(|u| u.is_bot && u.bot_description.contains("FB Page customer PSID:"))
+            .map(|u| {
+                let psid = u
+                    .bot_description
+                    .strip_prefix("FB Page customer PSID: ")
+                    .unwrap_or(&u.username)
+                    .to_string();
+                BotUserInfo {
+                    id: u.id,
+                    username: psid,
+                }
+            })
+            .collect();
+
+        tracing::info!(
+            "Found {} bot users out of {} total users",
+            bot_users.len(),
+            total_users
+        );
+        Ok(bot_users)
+    }
 }
 
 // Data types for polling and channel listing
@@ -1801,4 +2009,10 @@ pub struct ChannelInfo {
     pub name: String,
     pub display_name: String,
     pub team_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct BotUserInfo {
+    pub id: String,
+    pub username: String,
 }

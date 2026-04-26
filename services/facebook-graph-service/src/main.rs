@@ -1,3 +1,4 @@
+use facebook_graph_service::services::MattermostDbClient;
 use facebook_graph_service::{config::Config, create_app, db, run_migrations, AppState};
 use std::net::SocketAddr;
 use tracing::{info, warn};
@@ -29,6 +30,23 @@ async fn main() -> anyhow::Result<()> {
     )
     .with_db_pool(pool.clone())
     .await;
+
+    let mattermost_db = match &config.mattermost_database_url {
+        Some(db_url) => match MattermostDbClient::new(db_url).await {
+            Ok(client) => {
+                info!("Mattermost DB client initialized (direct DB access enabled)");
+                Some(client)
+            }
+            Err(e) => {
+                warn!("Failed to initialize Mattermost DB client: {}. Direct DB operations will be disabled.", e);
+                None
+            }
+        },
+        None => {
+            info!("MATTERMOST_DATABASE_URL not set - direct DB access disabled");
+            None
+        }
+    };
 
     let minio = match facebook_graph_service::storage::MinioStorage::new(
         &config.minio_endpoint,
@@ -70,6 +88,7 @@ async fn main() -> anyhow::Result<()> {
         customer_client,
         message_client,
         mattermost_client,
+        mattermost_db,
         minio,
         conversation_id_cache,
     };

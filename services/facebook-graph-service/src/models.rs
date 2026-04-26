@@ -142,6 +142,33 @@ pub struct GraphAttachment {
     pub file_url: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphReaction {
+    pub id: String,
+    pub r#type: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReactionsResponse {
+    pub data: Vec<GraphReaction>,
+    pub paging: Option<Paging>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProfilePictureData {
+    pub url: String,
+    #[serde(default)]
+    pub height: Option<i32>,
+    #[serde(default)]
+    pub width: Option<i32>,
+    pub is_silhouette: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProfilePictureResponse {
+    pub data: ProfilePictureData,
+}
+
 /// Attachment data (image/video)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphAttachmentData {

@@ -32,9 +32,11 @@ use crate::handlers::{
     exchange_token, full_history_reimport, get_import_status, health_check,
     import_all_conversations, import_single_conversation, instagram_webhook_handler,
     instagram_webhook_verification, reimport_all_conversations, reimport_conversation,
-    sync_all_conversations, webhook_handler, webhook_verification,
+    sync_all_conversations, update_all_avatars, webhook_handler, webhook_verification,
 };
-use crate::services::{CustomerServiceClient, MattermostClient, MessageServiceClient};
+use crate::services::{
+    CustomerServiceClient, MattermostClient, MattermostDbClient, MessageServiceClient,
+};
 use crate::storage::MinioStorage;
 
 /// Application state shared across handlers
@@ -45,6 +47,7 @@ pub struct AppState {
     pub customer_client: CustomerServiceClient,
     pub message_client: MessageServiceClient,
     pub mattermost_client: MattermostClient,
+    pub mattermost_db: Option<MattermostDbClient>,
     pub minio: Option<MinioStorage>,
     /// Cache: customer PSID → Facebook conversation ID (t_xxx format)
     /// Used by webhook handler to resolve conversation_id without per-request Graph API calls.
@@ -75,6 +78,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/sync", post(sync_all_conversations))
         .route("/api/status", get(get_import_status))
         .route("/api/token/exchange", post(exchange_token))
+        .route("/api/update-avatars", post(update_all_avatars))
         .with_state(state)
 }
 

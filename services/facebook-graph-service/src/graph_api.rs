@@ -18,6 +18,7 @@ use crate::config::Config;
 use crate::db;
 use crate::models::{
     Conversation, ConversationsResponse, FacebookRateLimitInfo, GraphMessage, MessagesResponse,
+    ProfilePictureResponse,
 };
 
 /// Facebook Graph API base URL
@@ -87,6 +88,12 @@ fn build_conversations_url(page_id: &str, access_token: &str) -> String {
 fn build_messages_url(conversation_id: &str, access_token: &str) -> String {
     format!(
         "{GRAPH_API_BASE}/{conversation_id}/messages?fields=id,created_time,from,message,to,attachments{{id,name,mime_type,size,image_data{{url}},video_data{{url}},file_url}}&access_token={access_token}&limit=100"
+    )
+}
+
+fn build_profile_picture_url(user_id: &str, access_token: &str) -> String {
+    format!(
+        "{GRAPH_API_BASE}/{user_id}/picture?redirect=false&type=large&access_token={access_token}"
     )
 }
 
@@ -649,6 +656,157 @@ pub async fn get_conversation_messages(
     Ok(all_messages)
 }
 
+pub async fn get_profile_picture(
+    user_id: &str,
+    access_token: &str,
+) -> Result<ProfilePictureResponse> {
+    let client = Client::new();
+    let url = build_profile_picture_url(user_id, access_token);
+
+    let response = client
+        .get(&url)
+        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .send()
+        .await
+        .context("Failed to fetch profile picture")?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await?;
+        return Err(anyhow::anyhow!(
+            "Profile picture API failed with {status}: {error_text}"
+        ));
+    }
+
+    let picture_response: ProfilePictureResponse = response
+        .json()
+        .await
+        .context("Failed to parse profile picture response")?;
+
+    Ok(picture_response)
+}
+
+pub async fn get_profile_pictures_batch(
+    psids: &[String],
+    access_token: &str,
+) -> Result<std::collections::HashMap<String, Result<crate::models::ProfilePictureData, String>>> {
+    if psids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let client = Client::new();
+    let batch_size = psids.len().min(50);
+
+    let mut results = std::collections::HashMap::new();
+
+    for chunk in psids.chunks(batch_size) {
+        let batch_requests: Vec<serde_json::Value> = chunk
+            .iter()
+            .map(|psid| {
+                serde_json::json!({
+                    "method": "GET",
+                    "relative_url": format!("{}/picture?redirect=false&type=large", psid),
+                })
+            })
+            .collect();
+
+        let mut batch_payload = serde_json::Map::new();
+        batch_payload.insert(
+            "batch".to_string(),
+            serde_json::Value::Array(batch_requests),
+        );
+        batch_payload.insert("include_headers".to_string(), serde_json::Value::Bool(true));
+
+        let url = format!("{GRAPH_API_BASE}/?access_token={access_token}");
+        let resp = client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .timeout(Duration::from_secs(60))
+            .body(serde_json::to_string(&batch_payload).unwrap())
+            .send()
+            .await
+            .context("Failed to send batch profile picture request")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            for psid in chunk {
+                results.insert(
+                    psid.clone(),
+                    Err(format!("Batch HTTP failed: {status} - {body}")),
+                );
+            }
+            continue;
+        }
+
+        let body_text = resp.text().await.context("Failed to read batch response")?;
+
+        let batch_results: Vec<serde_json::Value> =
+            match serde_json::from_str::<serde_json::Value>(&body_text) {
+                Ok(v) => {
+                    if let Some(arr) = v.as_array() {
+                        arr.clone()
+                    } else {
+                        let err_msg = v
+                            .get("error")
+                            .and_then(|e| e.get("message"))
+                            .map(|m| m.as_str().unwrap_or("Unknown batch error"))
+                            .unwrap_or("Unknown error");
+                        for psid in chunk {
+                            results.insert(psid.clone(), Err(format!("Batch failed: {err_msg}")));
+                        }
+                        continue;
+                    }
+                }
+                Err(e) => {
+                    for psid in chunk {
+                        results.insert(
+                            psid.clone(),
+                            Err(format!("Failed to parse batch response: {e}")),
+                        );
+                    }
+                    continue;
+                }
+            };
+
+        for (i, psid) in chunk.iter().enumerate() {
+            if i < batch_results.len() {
+                let item = &batch_results[i];
+                let code = item.get("code").and_then(|c| c.as_i64()).unwrap_or(200);
+                if (200..300).contains(&code) {
+                    let body_obj = item.get("body").or_else(|| item.get("response"));
+                    if let Some(body) = body_obj {
+                        match serde_json::from_value::<ProfilePictureResponse>(body.clone()) {
+                            Ok(pic_resp) => {
+                                results.insert(psid.clone(), Ok(pic_resp.data));
+                            }
+                            Err(e) => {
+                                results.insert(psid.clone(), Err(format!("Parse error: {e}")));
+                            }
+                        }
+                    } else {
+                        results.insert(psid.clone(), Err("No body in response".to_string()));
+                    }
+                } else {
+                    let error_msg = item
+                        .get("body")
+                        .or_else(|| item.get("error"))
+                        .and_then(|e| e.get("message"))
+                        .map(|m| m.as_str().unwrap_or("Unknown error"))
+                        .unwrap_or("Unknown error");
+                    results.insert(psid.clone(), Err(format!("Error {code}: {error_msg}")));
+                }
+            } else {
+                results.insert(psid.clone(), Err("No response for this PSID".to_string()));
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    Ok(results)
+}
+
 // Token Operations
 
 /// Debug/verify an access token
@@ -765,60 +923,6 @@ pub async fn send_message_to_facebook(
 
     info!(
         "Message sent to Facebook user {}: mid={}",
-        recipient_psid, result.message_id
-    );
-
-    Ok(result.message_id)
-}
-
-/// Send an image attachment to a Facebook user via the Messenger Send API.
-///
-/// `image_url` must be a publicly accessible URL.
-pub async fn send_image_to_facebook(
-    access_token: &str,
-    recipient_psid: &str,
-    image_url: &str,
-) -> Result<String> {
-    let client = Client::new();
-    let url = format!("{GRAPH_API_BASE}/me/messages?access_token={access_token}");
-
-    let payload = serde_json::json!({
-        "recipient": {
-            "id": recipient_psid
-        },
-        "message": {
-            "attachment": {
-                "type": "image",
-                "payload": {
-                    "url": image_url
-                }
-            }
-        }
-    });
-
-    let response = client
-        .post(&url)
-        .json(&payload)
-        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-        .send()
-        .await
-        .context("Failed to send image to Facebook")?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let error_text = response.text().await?;
-        return Err(anyhow::anyhow!(
-            "Facebook Send API (image) failed with {status}: {error_text}"
-        ));
-    }
-
-    let result: SendMessageResponse = response
-        .json()
-        .await
-        .context("Failed to parse Send API image response")?;
-
-    info!(
-        "Image sent to Facebook user {}: mid={}",
         recipient_psid, result.message_id
     );
 

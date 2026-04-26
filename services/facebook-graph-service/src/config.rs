@@ -33,6 +33,8 @@ pub struct Config {
     /// Mattermost admin username
     pub mattermost_username: String,
     pub mattermost_password: Option<String>,
+    /// Mattermost database URL (for direct DB access bypassing API)
+    pub mattermost_database_url: Option<String>,
     /// Rate limit warning threshold (percentage)
     #[serde(default = "default_rate_limit_warning_threshold")]
     pub rate_limit_warning_threshold: f32,
@@ -118,6 +120,7 @@ impl Config {
             mattermost_username: env::var("MATTERMOST_USERNAME")
                 .unwrap_or_else(|_| "admin".to_string()),
             mattermost_password: env::var("MATTERMOST_PASSWORD").ok(),
+            mattermost_database_url: env::var("MATTERMOST_DATABASE_URL").ok(),
             rate_limit_warning_threshold: env::var("RATE_LIMIT_WARNING_THRESHOLD")
                 .unwrap_or_else(|_| "80.0".to_string())
                 .parse()

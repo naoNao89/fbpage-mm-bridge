@@ -12,6 +12,47 @@ async fn mark_message_synced(state: &AppState, msg_id: Uuid, channel_id: &str) {
     }
 }
 
+async fn set_customer_avatar_if_needed(
+    state: &AppState,
+    mm: &crate::services::MattermostClient,
+    psid: &str,
+    bot_user_id: &str,
+) {
+    let fb_token = state.config.facebook_page_access_token.clone();
+    let psid = psid.to_string();
+    let bot_user_id = bot_user_id.to_string();
+    let mm = mm.clone();
+
+    tokio::spawn(async move {
+        match crate::graph_api::get_profile_picture(&psid, &fb_token).await {
+            Ok(picture) => {
+                if picture.data.is_silhouette {
+                    info!("Poller: PSID {} has silhouette, skipping avatar", psid);
+                    return;
+                }
+                info!(
+                    "Poller: Setting avatar for bot {} from URL: {}",
+                    bot_user_id, picture.data.url
+                );
+                if let Err(e) = mm
+                    .set_user_profile_image(&bot_user_id, &picture.data.url)
+                    .await
+                {
+                    warn!(
+                        "Failed to set profile picture for bot {}: {}",
+                        bot_user_id, e
+                    );
+                } else {
+                    info!("Set profile picture for bot {}", bot_user_id);
+                }
+            }
+            Err(e) => {
+                warn!("Failed to get profile picture for PSID {}: {}", psid, e);
+            }
+        }
+    });
+}
+
 pub async fn run_poller(state: AppState, interval_secs: u64) {
     let mut last_poll_ts = chrono::Utc::now() - chrono::Duration::seconds(interval_secs as i64 * 2);
 
@@ -201,10 +242,7 @@ async fn poll_conversation_new_messages(
 
         match state.message_client.store_message(message_payload).await {
             Ok(msg_resp) => {
-                if !mm
-                    .mark_posted_persistent(&msg.id, conversation_id, &msg.id)
-                    .await
-                {
+                if mm.is_posted(&msg.id).await {
                     continue;
                 }
 
@@ -221,6 +259,7 @@ async fn poll_conversation_new_messages(
                         .await
                     {
                         Ok((bot_uid, bot_token)) => {
+                            set_customer_avatar_if_needed(state, mm, &cust_id, &bot_uid).await;
                             let (msg_text, file_ids) = if !attachments.is_empty() {
                                 crate::media::process_attachments_for_post(
                                     state,
@@ -268,6 +307,9 @@ async fn poll_conversation_new_messages(
                                     if root_id.is_none() {
                                         mm.set_root_id(conversation_id, &post_id);
                                     }
+                                    let _ = mm
+                                        .mark_posted_persistent(&msg.id, conversation_id, &post_id)
+                                        .await;
                                     mark_message_synced(state, msg_resp.id, &channel_id).await;
                                     posted += 1;
                                 }
@@ -308,6 +350,13 @@ async fn poll_conversation_new_messages(
                                     match retry_result {
                                         Ok(post_id) => {
                                             mm.set_root_id(conversation_id, &post_id);
+                                            let _ = mm
+                                                .mark_posted_persistent(
+                                                    &msg.id,
+                                                    conversation_id,
+                                                    &post_id,
+                                                )
+                                                .await;
                                             mark_message_synced(state, msg_resp.id, &channel_id)
                                                 .await;
                                             posted += 1;
@@ -322,6 +371,13 @@ async fn poll_conversation_new_messages(
                                                 .await
                                             {
                                                 mm.set_root_id(conversation_id, &post_id);
+                                                let _ = mm
+                                                    .mark_posted_persistent(
+                                                        &msg.id,
+                                                        conversation_id,
+                                                        &post_id,
+                                                    )
+                                                    .await;
                                                 mark_message_synced(
                                                     state,
                                                     msg_resp.id,
@@ -344,6 +400,13 @@ async fn poll_conversation_new_messages(
                                         if root_id.is_none() {
                                             mm.set_root_id(conversation_id, &post_id);
                                         }
+                                        let _ = mm
+                                            .mark_posted_persistent(
+                                                &msg.id,
+                                                conversation_id,
+                                                &post_id,
+                                            )
+                                            .await;
                                         mark_message_synced(state, msg_resp.id, &channel_id).await;
                                         posted += 1;
                                     }
@@ -369,6 +432,9 @@ async fn poll_conversation_new_messages(
                                 if root_id.is_none() {
                                     mm.set_root_id(conversation_id, &post_id);
                                 }
+                                let _ = mm
+                                    .mark_posted_persistent(&msg.id, conversation_id, &post_id)
+                                    .await;
                                 mark_message_synced(state, msg_resp.id, &channel_id).await;
                                 posted += 1;
                             }
@@ -402,6 +468,9 @@ async fn poll_conversation_new_messages(
                             if root_id.is_none() {
                                 mm.set_root_id(conversation_id, &post_id);
                             }
+                            let _ = mm
+                                .mark_posted_persistent(&msg.id, conversation_id, &post_id)
+                                .await;
                             mark_message_synced(state, msg_resp.id, &channel_id).await;
                             posted += 1;
                         }

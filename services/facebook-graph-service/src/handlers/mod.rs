@@ -417,13 +417,13 @@ pub async fn webhook_handler(
                     };
 
                     if let Some(ref eid) = external_id {
-                        if !state.mattermost_client.mark_posted(eid) {
+                        if state.mattermost_client.is_posted(eid).await {
                             continue;
                         }
                     }
 
                     let display_name = customer.name.as_deref().unwrap_or(&conversation_id);
-                    if let Ok(Some(channel_id)) = post_to_mattermost(
+                    let mattermost_post_result = post_to_mattermost(
                         &state,
                         &conversation_id,
                         &msg_text,
@@ -432,8 +432,15 @@ pub async fn webhook_handler(
                         direction,
                         Some(customer_id),
                     )
-                    .await
-                    {
+                    .await;
+
+                    if let Some(ref eid) = external_id {
+                        if mattermost_post_result.is_ok() {
+                            state.mattermost_client.mark_posted(eid);
+                        }
+                    }
+
+                    if let Ok(Some(channel_id)) = mattermost_post_result {
                         if let Err(e) = state.message_client.mark_synced(msg_id, &channel_id).await
                         {
                             warn!("Failed to mark message as synced: {}", e);
@@ -482,6 +489,30 @@ async fn post_to_mattermost(
                     .await
                 {
                     Ok((bot_user_id, bot_token)) => {
+                        let fb_token = state.config.facebook_page_access_token.clone();
+                        let psid = psid.to_string();
+                        let bot_uid = bot_user_id.clone();
+                        let mm_clone = mm.clone();
+                        tokio::spawn(async move {
+                            if let Ok(picture) =
+                                crate::graph_api::get_profile_picture(&psid, &fb_token).await
+                            {
+                                if !picture.data.is_silhouette {
+                                    if let Err(e) = mm_clone
+                                        .set_user_profile_image(&bot_uid, &picture.data.url)
+                                        .await
+                                    {
+                                        warn!(
+                                            "Failed to set profile picture for bot {}: {}",
+                                            bot_uid, e
+                                        );
+                                    } else {
+                                        info!("Set profile picture for bot {}", bot_uid);
+                                    }
+                                }
+                            }
+                        });
+
                         let root = if let Some(r) = root_id {
                             Some(r.to_string())
                         } else {
@@ -2201,8 +2232,7 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
         summary.conversations_processed += 1;
 
         // Log progress every 100 conversations
-        #[allow(clippy::manual_is_multiple_of)]
-        if summary.conversations_processed % 100 == 0 {
+        if summary.conversations_processed.checked_rem(100) == Some(0) {
             info!(
                 "Full history reimport progress: {}/{} conversations, {} posts deleted, {} messages posted",
                 summary.conversations_processed,
@@ -2502,4 +2532,130 @@ async fn sync_conversation(
         messages_posted: posted,
         messages_skipped: skipped,
     })
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateAvatarsResult {
+    pub total: usize,
+    pub updated: usize,
+    pub failed: usize,
+    pub skipped: usize,
+    pub errors: Vec<String>,
+}
+
+pub async fn update_all_avatars(
+    State(state): State<AppState>,
+) -> Result<Json<UpdateAvatarsResult>, (StatusCode, String)> {
+    let mm = &state.mattermost_client;
+    let fb_token = &state.config.facebook_page_access_token;
+
+    let bot_users = mm.get_all_bot_users().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to get bot users: {e}"),
+        )
+    })?;
+
+    let mut updated = 0;
+    let mut failed = 0;
+    let mut skipped = 0;
+    let mut errors = Vec::new();
+
+    info!("Updating avatars for {} bot users", bot_users.len());
+
+    let psids: Vec<String> = bot_users
+        .iter()
+        .map(|bot| {
+            bot.username
+                .strip_prefix("fb-")
+                .unwrap_or(&bot.username)
+                .to_string()
+        })
+        .collect();
+
+    info!(
+        "Fetching profile pictures for {} PSIDs in batch",
+        psids.len()
+    );
+
+    match graph_api::get_profile_pictures_batch(&psids, fb_token).await {
+        Ok(results) => {
+            info!("Got batch profile picture results: {} PSIDs", results.len());
+
+            for bot in &bot_users {
+                let psid = bot.username.strip_prefix("fb-").unwrap_or(&bot.username);
+
+                match results.get(psid) {
+                    Some(Ok(picture_data)) => {
+                        if picture_data.is_silhouette {
+                            info!(
+                                "Bot {} has no profile picture (silhouette), skipping",
+                                bot.username
+                            );
+                            skipped += 1;
+                            continue;
+                        }
+
+                        info!(
+                            "Setting avatar for bot {} from URL: {}",
+                            bot.username, picture_data.url
+                        );
+
+                        match mm.set_user_profile_image(&bot.id, &picture_data.url).await {
+                            Ok(()) => {
+                                info!("Updated avatar for bot {} ({})", bot.username, bot.id);
+                                updated += 1;
+                            }
+                            Err(e) => {
+                                warn!("Failed to set avatar for bot {}: {}", bot.username, e);
+                                failed += 1;
+                                errors.push(format!("{}: set avatar failed: {e}", bot.username));
+                            }
+                        }
+                    }
+                    Some(Err(e)) => {
+                        warn!(
+                            "Failed to get profile picture for bot {}: {}",
+                            bot.username, e
+                        );
+                        failed += 1;
+                        errors.push(format!("{}: {e}", bot.username));
+                    }
+                    None => {
+                        warn!(
+                            "No profile picture result for bot {} (PSID: {})",
+                            bot.username, psid
+                        );
+                        failed += 1;
+                        errors.push(format!("{}: no result returned", bot.username));
+                    }
+                }
+
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
+        Err(e) => {
+            warn!("Batch profile picture fetch failed: {}", e);
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Batch fetch failed: {e}"),
+            ));
+        }
+    }
+
+    info!(
+        "Avatar update complete: total={}, updated={}, failed={}, skipped={}",
+        bot_users.len(),
+        updated,
+        failed,
+        skipped
+    );
+
+    Ok(Json(UpdateAvatarsResult {
+        total: bot_users.len(),
+        updated,
+        failed,
+        skipped,
+        errors,
+    }))
 }

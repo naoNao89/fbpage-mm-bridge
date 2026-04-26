@@ -8,6 +8,7 @@ on:
       - 'docker-compose.yml'
       - 'nginx/**'
       - 'Dockerfile.nginx'
+      - 'scripts/deploy.sh'
       - '.github/workflows/deploy-mattermost.yml'
   workflow_dispatch:
     inputs:
@@ -69,6 +70,7 @@ jobs:
               - 'Cargo.lock'
               - 'docker-compose.yml'
               - 'docker-bake.hcl'
+              - 'scripts/deploy.sh'
             any-service:
               - 'services/customer-service/**'
               - 'services/message-service/**'
@@ -104,7 +106,7 @@ jobs:
   # ─── Build Customer Service (conditional) ─────────────────────────────
   build-customer:
     needs: detect-changes
-    if: needs.detect-changes.outputs.customer == 'true' || needs.detect-changes.outputs.shared == 'true'
+    if: needs.detect-changes.outputs.any-service == 'true' || needs.detect-changes.outputs.shared == 'true' || needs.detect-changes.outputs.nginx == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -151,7 +153,7 @@ jobs:
   # ─── Build Message Service (conditional) ──────────────────────────────
   build-message:
     needs: detect-changes
-    if: needs.detect-changes.outputs.message == 'true' || needs.detect-changes.outputs.shared == 'true'
+    if: needs.detect-changes.outputs.any-service == 'true' || needs.detect-changes.outputs.shared == 'true' || needs.detect-changes.outputs.nginx == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -198,7 +200,7 @@ jobs:
   # ─── Build Facebook Graph Service (conditional) ───────────────────────
   build-facebook:
     needs: detect-changes
-    if: needs.detect-changes.outputs.facebook == 'true' || needs.detect-changes.outputs.shared == 'true'
+    if: needs.detect-changes.outputs.any-service == 'true' || needs.detect-changes.outputs.shared == 'true' || needs.detect-changes.outputs.nginx == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -244,7 +246,7 @@ jobs:
 
   build-mm-bridge-bot:
     needs: detect-changes
-    if: needs.detect-changes.outputs.mm-bridge-bot == 'true' || needs.detect-changes.outputs.shared == 'true'
+    if: needs.detect-changes.outputs.any-service == 'true' || needs.detect-changes.outputs.shared == 'true' || needs.detect-changes.outputs.nginx == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -299,7 +301,9 @@ jobs:
        needs.detect-changes.outputs.facebook == 'true' ||
        needs.detect-changes.outputs.mm-bridge-bot == 'true' ||
        needs.detect-changes.outputs.nginx == 'true' ||
-       needs.detect-changes.outputs.shared == 'true')
+       needs.detect-changes.outputs.shared == 'true') &&
+      !contains(join(needs.*.result, ','), 'failure') &&
+      !contains(join(needs.*.result, ','), 'cancelled')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
