@@ -31,7 +31,7 @@ COPY services/customer-service/src services/customer-service/src
 COPY services/customer-service/migrations services/customer-service/migrations
 COPY services/shared-utils/src services/shared-utils/src
 
-RUN touch services/customer-service/src/main.rs
+RUN touch services/customer-service/src/main.rs services/shared-utils/src/lib.rs
 
 RUN cargo build --release --package customer-service
 
