@@ -250,7 +250,7 @@ for service in customer-service message-service facebook-graph-service mm-bridge
   for attempt in $(seq 1 12); do
     CONTAINER_ID=$(docker compose ps -q "$service" 2>/dev/null || true)
     if [ -n "$CONTAINER_ID" ]; then
-      CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_ID" 2>/dev/null || echo "no-healthcheck")
+      CONTAINER_STATUS=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "$CONTAINER_ID" 2>/dev/null || echo "no-healthcheck")
       if [ "$CONTAINER_STATUS" = "healthy" ] || [ "$CONTAINER_STATUS" = "no-healthcheck" ]; then
         echo "[PASS] $service: ready"
         break
