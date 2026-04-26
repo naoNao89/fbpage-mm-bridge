@@ -59,6 +59,17 @@ PW=$(env_merge POSTGRES_PASSWORD postgres)
 USER=$(env_merge POSTGRES_USER postgres)
 MM_PW=$(env_merge MATTERMOST_PASSWORD "")
 [ -z "$MM_PW" ] && MM_PW=$(env_merge MM_ADMIN_PASSWORD "")
+image_tag_for() {
+  if [ "${1:-}" = "success" ] && [ -n "${IMAGE_TAG:-}" ]; then
+    printf '%s' "$IMAGE_TAG"
+  else
+    printf '%s' "latest"
+  fi
+}
+CUSTOMER_SERVICE_IMAGE_TAG="$(image_tag_for "${BUILD_CUSTOMER:-}")"
+MESSAGE_SERVICE_IMAGE_TAG="$(image_tag_for "${BUILD_MESSAGE:-}")"
+FACEBOOK_GRAPH_SERVICE_IMAGE_TAG="$(image_tag_for "${BUILD_FACEBOOK:-}")"
+MM_BRIDGE_BOT_IMAGE_TAG="$(image_tag_for "${BUILD_MM_BRIDGE_BOT:-}")"
 
 cat > .env << ENVEOF
 DATABASE_URL=postgres://${USER}:${PW}@customer-db:5432/customer_service
@@ -93,6 +104,10 @@ MATTERMOST_PORT=8065
 CUSTOMER_SERVICE_PORT=3001
 MESSAGE_SERVICE_PORT=3002
 FACEBOOK_GRAPH_SERVICE_PORT=3003
+CUSTOMER_SERVICE_IMAGE_TAG=${CUSTOMER_SERVICE_IMAGE_TAG}
+MESSAGE_SERVICE_IMAGE_TAG=${MESSAGE_SERVICE_IMAGE_TAG}
+FACEBOOK_GRAPH_SERVICE_IMAGE_TAG=${FACEBOOK_GRAPH_SERVICE_IMAGE_TAG}
+MM_BRIDGE_BOT_IMAGE_TAG=${MM_BRIDGE_BOT_IMAGE_TAG}
 ENVEOF
 
 echo ".env generated successfully"
@@ -126,7 +141,10 @@ docker network inspect mattermost_fbpage-mm-network >/dev/null 2>&1 || \
 export GHCR_OWNER="${GHCR_OWNER:-naonao89}"
 
 echo "Pulling ALL service images from GHCR..."
-docker compose pull 2>/dev/null || echo "Warning: docker compose pull had errors (continuing)"
+if ! docker compose pull; then
+  echo "ERROR: docker compose pull failed"
+  exit 1
+fi
 
 docker compose down --remove-orphans --timeout 30 || echo "Warning: docker compose down failed (continuing)"
 
@@ -144,6 +162,36 @@ if ! docker compose up -d --force-recreate; then
   exit 1
 fi
 echo "docker compose up -d completed successfully"
+
+verify_image_tag() {
+  local service="$1"
+  local expected_tag="$2"
+  if [ "$expected_tag" = "latest" ]; then
+    return 0
+  fi
+  local container_id
+  container_id="$(docker compose ps -q "$service" 2>/dev/null || true)"
+  if [ -z "$container_id" ]; then
+    echo "ERROR: $service container was not created"
+    exit 1
+  fi
+  local running_image
+  running_image="$(docker inspect --format='{{.Config.Image}}' "$container_id")"
+  case "$running_image" in
+    *":$expected_tag")
+      echo "[PASS] $service running expected image tag $expected_tag"
+      ;;
+    *)
+      echo "ERROR: $service is running $running_image, expected tag $expected_tag"
+      exit 1
+      ;;
+  esac
+}
+
+verify_image_tag customer-service "$CUSTOMER_SERVICE_IMAGE_TAG"
+verify_image_tag message-service "$MESSAGE_SERVICE_IMAGE_TAG"
+verify_image_tag facebook-graph-service "$FACEBOOK_GRAPH_SERVICE_IMAGE_TAG"
+verify_image_tag mm-bridge-bot "$MM_BRIDGE_BOT_IMAGE_TAG"
 
 # ─── Wait for containers ────────────────────────────────────────────────
 echo "Waiting for containers to be created..."
