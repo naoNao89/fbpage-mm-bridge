@@ -16,13 +16,17 @@ use customer_service::{
     models::{CreateCustomerRequest, CustomerResponse, UpdateCustomerRequest},
     AppState, PgPool,
 };
+use tokio::sync::{Mutex, MutexGuard};
 use tower::ServiceExt; // for oneshot
 use uuid::Uuid;
 
 use common::{cleanup_test_db, setup_test_db, unique_platform_user_id};
 
+static TEST_DB_LOCK: Mutex<()> = Mutex::const_new(());
+
 /// Test helper to create a test app with database
-async fn create_test_app() -> (Router, PgPool) {
+async fn create_test_app() -> (Router, PgPool, MutexGuard<'static, ()>) {
+    let guard = TEST_DB_LOCK.lock().await;
     let pool = setup_test_db().await;
     cleanup_test_db(&pool).await;
 
@@ -33,12 +37,12 @@ async fn create_test_app() -> (Router, PgPool) {
     };
     let app = create_app(state);
 
-    (app, pool)
+    (app, pool, guard)
 }
 
 #[tokio::test]
 async fn test_health_check() {
-    let (app, pool) = create_test_app().await;
+    let (app, pool, _guard) = create_test_app().await;
 
     let response = app
         .oneshot(
@@ -66,7 +70,7 @@ async fn test_health_check() {
 
 #[tokio::test]
 async fn test_create_customer() {
-    let (app, pool) = create_test_app().await;
+    let (app, pool, _guard) = create_test_app().await;
 
     let request = CreateCustomerRequest {
         platform_user_id: "test_user_123".to_string(),
@@ -103,7 +107,7 @@ async fn test_create_customer() {
 
 #[tokio::test]
 async fn test_create_customer_idempotent() {
-    let (app, pool) = create_test_app().await;
+    let (app, pool, _guard) = create_test_app().await;
 
     let request = CreateCustomerRequest {
         platform_user_id: "idempotent_user".to_string(),
@@ -160,7 +164,7 @@ async fn test_create_customer_idempotent() {
 
 #[tokio::test]
 async fn test_get_customer_by_id() {
-    let (app, pool) = create_test_app().await;
+    let (app, pool, _guard) = create_test_app().await;
 
     let uid = unique_platform_user_id();
     let customer = db::get_or_create_customer(&pool, &uid, "facebook", Some("Get Test"))
@@ -193,7 +197,7 @@ async fn test_get_customer_by_id() {
 
 #[tokio::test]
 async fn test_get_customer_by_id_not_found() {
-    let (app, pool) = create_test_app().await;
+    let (app, pool, _guard) = create_test_app().await;
 
     let non_existent_id = Uuid::new_v4();
 
@@ -215,7 +219,7 @@ async fn test_get_customer_by_id_not_found() {
 
 #[tokio::test]
 async fn test_get_customer_by_platform() {
-    let (app, pool) = create_test_app().await;
+    let (app, pool, _guard) = create_test_app().await;
 
     let uid = unique_platform_user_id();
     let customer = db::get_or_create_customer(&pool, &uid, "facebook", Some("Platform Test"))
@@ -249,7 +253,7 @@ async fn test_get_customer_by_platform() {
 
 #[tokio::test]
 async fn test_update_customer() {
-    let (app, pool) = create_test_app().await;
+    let (app, pool, _guard) = create_test_app().await;
 
     let uid = unique_platform_user_id();
     let customer = db::get_or_create_customer(&pool, &uid, "facebook", Some("Original Name"))
@@ -290,7 +294,7 @@ async fn test_update_customer() {
 
 #[tokio::test]
 async fn test_list_customers() {
-    let (app, pool) = create_test_app().await;
+    let (app, pool, _guard) = create_test_app().await;
 
     let uid1 = unique_platform_user_id();
     let uid2 = unique_platform_user_id();
@@ -358,7 +362,7 @@ async fn test_list_customers() {
 
 #[tokio::test]
 async fn test_list_customers_by_platform() {
-    let (app, pool) = create_test_app().await;
+    let (app, pool, _guard) = create_test_app().await;
 
     // Create customers on different platforms
     db::get_or_create_customer(&pool, "platform_filter_1", "facebook", Some("FB User"))
@@ -397,7 +401,7 @@ async fn test_list_customers_by_platform() {
 
 #[tokio::test]
 async fn test_customer_stats() {
-    let (app, pool) = create_test_app().await;
+    let (app, pool, _guard) = create_test_app().await;
 
     let uid1 = unique_platform_user_id();
     let uid2 = unique_platform_user_id();

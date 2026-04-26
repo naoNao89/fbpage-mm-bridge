@@ -568,7 +568,7 @@ mod tests {
         fn test_mark_synced_url_format() {
             let base_url = "http://localhost:3002";
             let message_id = "123e4567-e89b-12d3-a456-426614174000";
-            let url = format!("{}/api/messages/{}/synced", base_url, message_id);
+            let url = format!("{base_url}/api/messages/{message_id}/synced");
             assert_eq!(
                 url,
                 "http://localhost:3002/api/messages/123e4567-e89b-12d3-a456-426614174000/synced"

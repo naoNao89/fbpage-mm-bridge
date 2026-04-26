@@ -30,9 +30,18 @@ async fn set_customer_avatar_if_needed(
                     info!("Poller: PSID {} has silhouette, skipping avatar", psid);
                     return;
                 }
-                info!("Poller: Setting avatar for bot {} from URL: {}", bot_user_id, picture.data.url);
-                if let Err(e) = mm.set_user_profile_image(&bot_user_id, &picture.data.url).await {
-                    warn!("Failed to set profile picture for bot {}: {}", bot_user_id, e);
+                info!(
+                    "Poller: Setting avatar for bot {} from URL: {}",
+                    bot_user_id, picture.data.url
+                );
+                if let Err(e) = mm
+                    .set_user_profile_image(&bot_user_id, &picture.data.url)
+                    .await
+                {
+                    warn!(
+                        "Failed to set profile picture for bot {}: {}",
+                        bot_user_id, e
+                    );
                 } else {
                     info!("Set profile picture for bot {}", bot_user_id);
                 }
@@ -298,7 +307,9 @@ async fn poll_conversation_new_messages(
                                     if root_id.is_none() {
                                         mm.set_root_id(conversation_id, &post_id);
                                     }
-                                    let _ = mm.mark_posted_persistent(&msg.id, conversation_id, &post_id).await;
+                                    let _ = mm
+                                        .mark_posted_persistent(&msg.id, conversation_id, &post_id)
+                                        .await;
                                     mark_message_synced(state, msg_resp.id, &channel_id).await;
                                     posted += 1;
                                 }
@@ -339,7 +350,13 @@ async fn poll_conversation_new_messages(
                                     match retry_result {
                                         Ok(post_id) => {
                                             mm.set_root_id(conversation_id, &post_id);
-                                            let _ = mm.mark_posted_persistent(&msg.id, conversation_id, &post_id).await;
+                                            let _ = mm
+                                                .mark_posted_persistent(
+                                                    &msg.id,
+                                                    conversation_id,
+                                                    &post_id,
+                                                )
+                                                .await;
                                             mark_message_synced(state, msg_resp.id, &channel_id)
                                                 .await;
                                             posted += 1;
@@ -354,7 +371,13 @@ async fn poll_conversation_new_messages(
                                                 .await
                                             {
                                                 mm.set_root_id(conversation_id, &post_id);
-                                                let _ = mm.mark_posted_persistent(&msg.id, conversation_id, &post_id).await;
+                                                let _ = mm
+                                                    .mark_posted_persistent(
+                                                        &msg.id,
+                                                        conversation_id,
+                                                        &post_id,
+                                                    )
+                                                    .await;
                                                 mark_message_synced(
                                                     state,
                                                     msg_resp.id,
@@ -377,7 +400,13 @@ async fn poll_conversation_new_messages(
                                         if root_id.is_none() {
                                             mm.set_root_id(conversation_id, &post_id);
                                         }
-                                        let _ = mm.mark_posted_persistent(&msg.id, conversation_id, &post_id).await;
+                                        let _ = mm
+                                            .mark_posted_persistent(
+                                                &msg.id,
+                                                conversation_id,
+                                                &post_id,
+                                            )
+                                            .await;
                                         mark_message_synced(state, msg_resp.id, &channel_id).await;
                                         posted += 1;
                                     }
@@ -403,7 +432,9 @@ async fn poll_conversation_new_messages(
                                 if root_id.is_none() {
                                     mm.set_root_id(conversation_id, &post_id);
                                 }
-                                let _ = mm.mark_posted_persistent(&msg.id, conversation_id, &post_id).await;
+                                let _ = mm
+                                    .mark_posted_persistent(&msg.id, conversation_id, &post_id)
+                                    .await;
                                 mark_message_synced(state, msg_resp.id, &channel_id).await;
                                 posted += 1;
                             }
@@ -437,7 +468,9 @@ async fn poll_conversation_new_messages(
                             if root_id.is_none() {
                                 mm.set_root_id(conversation_id, &post_id);
                             }
-                            let _ = mm.mark_posted_persistent(&msg.id, conversation_id, &post_id).await;
+                            let _ = mm
+                                .mark_posted_persistent(&msg.id, conversation_id, &post_id)
+                                .await;
                             mark_message_synced(state, msg_resp.id, &channel_id).await;
                             posted += 1;
                         }

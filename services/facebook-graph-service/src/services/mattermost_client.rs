@@ -130,7 +130,10 @@ impl MattermostClient {
 
     /// Login to Mattermost and cache the token
     pub async fn login(&self) -> Result<()> {
-        tracing::info!("Attempting Mattermost login with username: {}", self.username);
+        tracing::info!(
+            "Attempting Mattermost login with username: {}",
+            self.username
+        );
         let url = format!("{}/api/v4/users/login", self.base_url);
         tracing::debug!("Login URL: {}", url);
         let payload = serde_json::json!({
@@ -174,7 +177,10 @@ impl MattermostClient {
                 )
             })?;
 
-        tracing::info!("Login successful, token obtained: {}...", &token[..token.len().min(10)]);
+        tracing::info!(
+            "Login successful, token obtained: {}...",
+            &token[..token.len().min(10)]
+        );
         let mut tok = self.token.lock().expect("token lock poisoned");
         *tok = Some(token);
 
@@ -301,7 +307,10 @@ impl MattermostClient {
             self.login().await?;
         }
         let token = self.token.lock().expect("token lock poisoned").clone();
-        tracing::debug!("Token after login/check: {:?}", token.as_ref().map(|t| &t[..t.len().min(10)]));
+        tracing::debug!(
+            "Token after login/check: {:?}",
+            token.as_ref().map(|t| &t[..t.len().min(10)])
+        );
         token.ok_or_else(|| anyhow::anyhow!("No token after login"))
     }
 
@@ -1817,11 +1826,7 @@ impl MattermostClient {
         Ok(())
     }
 
-    pub async fn set_user_profile_image(
-        &self,
-        user_id: &str,
-        image_url: &str,
-    ) -> Result<()> {
+    pub async fn set_user_profile_image(&self, user_id: &str, image_url: &str) -> Result<()> {
         let auth = self.get_auth_header().await?;
 
         let client = reqwest::Client::new();
@@ -1829,20 +1834,27 @@ impl MattermostClient {
         let image_response = client
             .get(image_url)
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            )
             .header("Accept", "image/png,image/jpeg,image/*")
             .send()
             .await
-            .context(format!("Failed to download profile image from {}", image_url))?;
+            .context(format!("Failed to download profile image from {image_url}"))?;
 
         if !image_response.status().is_success() {
             let status = image_response.status();
             let body = image_response.text().await.unwrap_or_default();
-            tracing::warn!("Profile image download failed for user {}: status={}, url={}, body_len={}",
-                user_id, status, image_url, body.len());
+            tracing::warn!(
+                "Profile image download failed for user {}: status={}, url={}, body_len={}",
+                user_id,
+                status,
+                image_url,
+                body.len()
+            );
             return Err(anyhow::anyhow!(
-                "Failed to download profile image from {}: status={}, body={}",
-                image_url, status, body
+                "Failed to download profile image from {image_url}: status={status}, body={body}"
             ));
         }
 
@@ -1863,13 +1875,12 @@ impl MattermostClient {
             .file_name("avatar.png")
             .mime_str("image/png")
             .unwrap_or_else(|_| {
-                reqwest::multipart::Part::bytes(image_bytes.to_vec())
-                    .file_name("avatar")
+                reqwest::multipart::Part::bytes(image_bytes.to_vec()).file_name("avatar")
             });
 
         let form = reqwest::multipart::Form::new().part("image", image_part);
 
-        let url = format!("{}/api/v4/users/{}/image", self.base_url, user_id);
+        let url = format!("{}/api/v4/users/{user_id}/image", self.base_url);
         let resp = self
             .client
             .put(&url)
@@ -1884,7 +1895,9 @@ impl MattermostClient {
             let body = resp.text().await.unwrap_or_default();
             tracing::warn!(
                 "Failed to upload profile image for user {} to Mattermost: status={}, body={}",
-                user_id, resp_status, body
+                user_id,
+                resp_status,
+                body
             );
             return Err(anyhow::anyhow!("Set profile image failed: {body}"));
         }
@@ -1895,12 +1908,12 @@ impl MattermostClient {
 
     pub async fn get_all_bot_users(&self) -> Result<Vec<BotUserInfo>> {
         let auth = self.get_auth_header().await?;
-        tracing::debug!("Got auth token for get_all_bot_users: {}", &auth[..auth.len().min(10)]);
-
-        let url = format!(
-            "{}/api/v4/users?per_page=200",
-            self.base_url
+        tracing::debug!(
+            "Got auth token for get_all_bot_users: {}",
+            &auth[..auth.len().min(10)]
         );
+
+        let url = format!("{}/api/v4/users?per_page=200", self.base_url);
         tracing::debug!("Fetching users from: {}", url);
 
         let resp = self
@@ -1920,9 +1933,15 @@ impl MattermostClient {
             return Err(anyhow::anyhow!("Get users failed: {body}"));
         }
 
-        let body_text = resp.text().await.context("Failed to read users response body")?;
+        let body_text = resp
+            .text()
+            .await
+            .context("Failed to read users response body")?;
         tracing::debug!("Users response body length: {} bytes", body_text.len());
-        tracing::debug!("Users response body preview: {}", &body_text[..body_text.len().min(500)]);
+        tracing::debug!(
+            "Users response body preview: {}",
+            &body_text[..body_text.len().min(500)]
+        );
 
         #[derive(Debug, Deserialize)]
         struct UserInfo {
@@ -1944,7 +1963,8 @@ impl MattermostClient {
             .into_iter()
             .filter(|u| u.is_bot && u.bot_description.contains("FB Page customer PSID:"))
             .map(|u| {
-                let psid = u.bot_description
+                let psid = u
+                    .bot_description
                     .strip_prefix("FB Page customer PSID: ")
                     .unwrap_or(&u.username)
                     .to_string();
@@ -1955,7 +1975,11 @@ impl MattermostClient {
             })
             .collect();
 
-        tracing::info!("Found {} bot users out of {} total users", bot_users.len(), total_users);
+        tracing::info!(
+            "Found {} bot users out of {} total users",
+            bot_users.len(),
+            total_users
+        );
         Ok(bot_users)
     }
 }

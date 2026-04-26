@@ -17,8 +17,8 @@ use tracing::{debug, info, warn};
 use crate::config::Config;
 use crate::db;
 use crate::models::{
-    Conversation, ConversationsResponse, FacebookRateLimitInfo, GraphMessage, GraphReaction,
-    MessagesResponse, ProfilePictureResponse, ReactionsResponse,
+    Conversation, ConversationsResponse, FacebookRateLimitInfo, GraphMessage, MessagesResponse,
+    ProfilePictureResponse,
 };
 
 /// Facebook Graph API base URL
@@ -88,12 +88,6 @@ fn build_conversations_url(page_id: &str, access_token: &str) -> String {
 fn build_messages_url(conversation_id: &str, access_token: &str) -> String {
     format!(
         "{GRAPH_API_BASE}/{conversation_id}/messages?fields=id,created_time,from,message,to,attachments{{id,name,mime_type,size,image_data{{url}},video_data{{url}},file_url}}&access_token={access_token}&limit=100"
-    )
-}
-
-fn build_reactions_url(message_id: &str, access_token: &str) -> String {
-    format!(
-        "{GRAPH_API_BASE}/{message_id}/reactions?fields=id,type&access_token={access_token}&limit=100"
     )
 }
 
@@ -717,10 +711,13 @@ pub async fn get_profile_pictures_batch(
             .collect();
 
         let mut batch_payload = serde_json::Map::new();
-        batch_payload.insert("batch".to_string(), serde_json::Value::Array(batch_requests));
+        batch_payload.insert(
+            "batch".to_string(),
+            serde_json::Value::Array(batch_requests),
+        );
         batch_payload.insert("include_headers".to_string(), serde_json::Value::Bool(true));
 
-        let url = format!("{}/?access_token={}", GRAPH_API_BASE, access_token);
+        let url = format!("{GRAPH_API_BASE}/?access_token={access_token}");
         let resp = client
             .post(&url)
             .header("Content-Type", "application/json")
@@ -734,41 +731,49 @@ pub async fn get_profile_pictures_batch(
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             for psid in chunk {
-                results.insert(psid.clone(), Err(format!("Batch HTTP failed: {} - {}", status, body)));
+                results.insert(
+                    psid.clone(),
+                    Err(format!("Batch HTTP failed: {status} - {body}")),
+                );
             }
             continue;
         }
 
         let body_text = resp.text().await.context("Failed to read batch response")?;
 
-        let batch_results: Vec<serde_json::Value> = match serde_json::from_str::<serde_json::Value>(&body_text) {
-            Ok(v) => {
-                if let Some(arr) = v.as_array() {
-                    arr.clone()
-                } else {
-                    let err_msg = v.get("error")
-                        .and_then(|e| e.get("message"))
-                        .map(|m| m.as_str().unwrap_or("Unknown batch error"))
-                        .unwrap_or("Unknown error");
+        let batch_results: Vec<serde_json::Value> =
+            match serde_json::from_str::<serde_json::Value>(&body_text) {
+                Ok(v) => {
+                    if let Some(arr) = v.as_array() {
+                        arr.clone()
+                    } else {
+                        let err_msg = v
+                            .get("error")
+                            .and_then(|e| e.get("message"))
+                            .map(|m| m.as_str().unwrap_or("Unknown batch error"))
+                            .unwrap_or("Unknown error");
+                        for psid in chunk {
+                            results.insert(psid.clone(), Err(format!("Batch failed: {err_msg}")));
+                        }
+                        continue;
+                    }
+                }
+                Err(e) => {
                     for psid in chunk {
-                        results.insert(psid.clone(), Err(format!("Batch failed: {}", err_msg)));
+                        results.insert(
+                            psid.clone(),
+                            Err(format!("Failed to parse batch response: {e}")),
+                        );
                     }
                     continue;
                 }
-            }
-            Err(e) => {
-                for psid in chunk {
-                    results.insert(psid.clone(), Err(format!("Failed to parse batch response: {}", e)));
-                }
-                continue;
-            }
-        };
+            };
 
         for (i, psid) in chunk.iter().enumerate() {
             if i < batch_results.len() {
                 let item = &batch_results[i];
                 let code = item.get("code").and_then(|c| c.as_i64()).unwrap_or(200);
-                if code >= 200 && code < 300 {
+                if (200..300).contains(&code) {
                     let body_obj = item.get("body").or_else(|| item.get("response"));
                     if let Some(body) = body_obj {
                         match serde_json::from_value::<ProfilePictureResponse>(body.clone()) {
@@ -776,19 +781,20 @@ pub async fn get_profile_pictures_batch(
                                 results.insert(psid.clone(), Ok(pic_resp.data));
                             }
                             Err(e) => {
-                                results.insert(psid.clone(), Err(format!("Parse error: {}", e)));
+                                results.insert(psid.clone(), Err(format!("Parse error: {e}")));
                             }
                         }
                     } else {
                         results.insert(psid.clone(), Err("No body in response".to_string()));
                     }
                 } else {
-                    let error_msg = item.get("body")
+                    let error_msg = item
+                        .get("body")
                         .or_else(|| item.get("error"))
                         .and_then(|e| e.get("message"))
                         .map(|m| m.as_str().unwrap_or("Unknown error"))
                         .unwrap_or("Unknown error");
-                    results.insert(psid.clone(), Err(format!("Error {}: {}", code, error_msg)));
+                    results.insert(psid.clone(), Err(format!("Error {code}: {error_msg}")));
                 }
             } else {
                 results.insert(psid.clone(), Err("No response for this PSID".to_string()));
@@ -798,7 +804,7 @@ pub async fn get_profile_pictures_batch(
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
-Ok(results)
+    Ok(results)
 }
 
 // Token Operations

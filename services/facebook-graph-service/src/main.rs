@@ -1,5 +1,5 @@
-use facebook_graph_service::{config::Config, create_app, db, run_migrations, AppState};
 use facebook_graph_service::services::MattermostDbClient;
+use facebook_graph_service::{config::Config, create_app, db, run_migrations, AppState};
 use std::net::SocketAddr;
 use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -32,18 +32,16 @@ async fn main() -> anyhow::Result<()> {
     .await;
 
     let mattermost_db = match &config.mattermost_database_url {
-        Some(db_url) => {
-            match MattermostDbClient::new(db_url).await {
-                Ok(client) => {
-                    info!("Mattermost DB client initialized (direct DB access enabled)");
-                    Some(client)
-                }
-                Err(e) => {
-                    warn!("Failed to initialize Mattermost DB client: {}. Direct DB operations will be disabled.", e);
-                    None
-                }
+        Some(db_url) => match MattermostDbClient::new(db_url).await {
+            Ok(client) => {
+                info!("Mattermost DB client initialized (direct DB access enabled)");
+                Some(client)
             }
-        }
+            Err(e) => {
+                warn!("Failed to initialize Mattermost DB client: {}. Direct DB operations will be disabled.", e);
+                None
+            }
+        },
         None => {
             info!("MATTERMOST_DATABASE_URL not set - direct DB access disabled");
             None

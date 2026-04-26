@@ -494,10 +494,18 @@ async fn post_to_mattermost(
                         let bot_uid = bot_user_id.clone();
                         let mm_clone = mm.clone();
                         tokio::spawn(async move {
-                            if let Ok(picture) = crate::graph_api::get_profile_picture(&psid, &fb_token).await {
+                            if let Ok(picture) =
+                                crate::graph_api::get_profile_picture(&psid, &fb_token).await
+                            {
                                 if !picture.data.is_silhouette {
-                                    if let Err(e) = mm_clone.set_user_profile_image(&bot_uid, &picture.data.url).await {
-                                        warn!("Failed to set profile picture for bot {}: {}", bot_uid, e);
+                                    if let Err(e) = mm_clone
+                                        .set_user_profile_image(&bot_uid, &picture.data.url)
+                                        .await
+                                    {
+                                        warn!(
+                                            "Failed to set profile picture for bot {}: {}",
+                                            bot_uid, e
+                                        );
                                     } else {
                                         info!("Set profile picture for bot {}", bot_uid);
                                     }
@@ -2224,8 +2232,7 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
         summary.conversations_processed += 1;
 
         // Log progress every 100 conversations
-        #[allow(clippy::manual_is_multiple_of)]
-        if summary.conversations_processed % 100 == 0 {
+        if summary.conversations_processed.checked_rem(100) == Some(0) {
             info!(
                 "Full history reimport progress: {}/{} conversations, {} posts deleted, {} messages posted",
                 summary.conversations_processed,
@@ -2543,7 +2550,10 @@ pub async fn update_all_avatars(
     let fb_token = &state.config.facebook_page_access_token;
 
     let bot_users = mm.get_all_bot_users().await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get bot users: {}", e))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to get bot users: {e}"),
+        )
     })?;
 
     let mut updated = 0;
@@ -2555,10 +2565,18 @@ pub async fn update_all_avatars(
 
     let psids: Vec<String> = bot_users
         .iter()
-        .map(|bot| bot.username.strip_prefix("fb-").unwrap_or(&bot.username).to_string())
+        .map(|bot| {
+            bot.username
+                .strip_prefix("fb-")
+                .unwrap_or(&bot.username)
+                .to_string()
+        })
         .collect();
 
-    info!("Fetching profile pictures for {} PSIDs in batch", psids.len());
+    info!(
+        "Fetching profile pictures for {} PSIDs in batch",
+        psids.len()
+    );
 
     match graph_api::get_profile_pictures_batch(&psids, fb_token).await {
         Ok(results) => {
@@ -2570,12 +2588,18 @@ pub async fn update_all_avatars(
                 match results.get(psid) {
                     Some(Ok(picture_data)) => {
                         if picture_data.is_silhouette {
-                            info!("Bot {} has no profile picture (silhouette), skipping", bot.username);
+                            info!(
+                                "Bot {} has no profile picture (silhouette), skipping",
+                                bot.username
+                            );
                             skipped += 1;
                             continue;
                         }
 
-                        info!("Setting avatar for bot {} from URL: {}", bot.username, picture_data.url);
+                        info!(
+                            "Setting avatar for bot {} from URL: {}",
+                            bot.username, picture_data.url
+                        );
 
                         match mm.set_user_profile_image(&bot.id, &picture_data.url).await {
                             Ok(()) => {
@@ -2585,17 +2609,23 @@ pub async fn update_all_avatars(
                             Err(e) => {
                                 warn!("Failed to set avatar for bot {}: {}", bot.username, e);
                                 failed += 1;
-                                errors.push(format!("{}: set avatar failed: {}", bot.username, e));
+                                errors.push(format!("{}: set avatar failed: {e}", bot.username));
                             }
                         }
                     }
                     Some(Err(e)) => {
-                        warn!("Failed to get profile picture for bot {}: {}", bot.username, e);
+                        warn!(
+                            "Failed to get profile picture for bot {}: {}",
+                            bot.username, e
+                        );
                         failed += 1;
-                        errors.push(format!("{}: {}", bot.username, e));
+                        errors.push(format!("{}: {e}", bot.username));
                     }
                     None => {
-                        warn!("No profile picture result for bot {} (PSID: {})", bot.username, psid);
+                        warn!(
+                            "No profile picture result for bot {} (PSID: {})",
+                            bot.username, psid
+                        );
                         failed += 1;
                         errors.push(format!("{}: no result returned", bot.username));
                     }
@@ -2606,14 +2636,20 @@ pub async fn update_all_avatars(
         }
         Err(e) => {
             warn!("Batch profile picture fetch failed: {}", e);
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Batch fetch failed: {}", e)));
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Batch fetch failed: {e}"),
+            ));
         }
     }
 
-    let skipped = 0;
-
-    info!("Avatar update complete: total={}, updated={}, failed={}, skipped={}", 
-        bot_users.len(), updated, failed, skipped);
+    info!(
+        "Avatar update complete: total={}, updated={}, failed={}, skipped={}",
+        bot_users.len(),
+        updated,
+        failed,
+        skipped
+    );
 
     Ok(Json(UpdateAvatarsResult {
         total: bot_users.len(),

@@ -8,8 +8,8 @@
 //! WARNING: Direct DB manipulation bypasses application-level safeguards.
 //! Use with caution and always backup your database before operations.
 
-use sqlx::postgres::{PgPool, PgPoolOptions};
 use anyhow::{Context, Result};
+use sqlx::postgres::{PgPool, PgPoolOptions};
 
 /// Mattermost database client for direct operations
 #[derive(Clone)]
@@ -53,12 +53,11 @@ impl MattermostDbClient {
 
         if affected.rows_affected() == 0 {
             // Check if channel exists
-            let exists: Option<(String, i64)> = sqlx::query_as(
-                "SELECT id, deleteat FROM channels WHERE id = $1"
-            )
-            .bind(channelid)
-            .fetch_optional(&self.pool)
-            .await?;
+            let exists: Option<(String, i64)> =
+                sqlx::query_as("SELECT id, deleteat FROM channels WHERE id = $1")
+                    .bind(channelid)
+                    .fetch_optional(&self.pool)
+                    .await?;
 
             match exists {
                 Some((_, deleteat)) if deleteat > 0 => {
@@ -130,11 +129,7 @@ impl MattermostDbClient {
     /// DM channel naming convention in Mattermost:
     /// - No team: `__userId1__userId2__` (double underscore prefix/suffix)
     /// - The IDs are sorted to ensure consistent naming
-    pub async fn get_or_create_dm_channel(
-        &self,
-        userid_1: &str,
-        userid_2: &str,
-    ) -> Result<String> {
+    pub async fn get_or_create_dm_channel(&self, userid_1: &str, userid_2: &str) -> Result<String> {
         // Sort user IDs to ensure consistent channel name
         let (id1, id2) = if userid_1 < userid_2 {
             (userid_1, userid_2)
@@ -186,11 +181,7 @@ impl MattermostDbClient {
     }
 
     /// Add a user to a DM channel
-    pub async fn add_user_to_dm_channel(
-        &self,
-        channelid: &str,
-        userid: &str,
-    ) -> Result<()> {
+    pub async fn add_user_to_dm_channel(&self, channelid: &str, userid: &str) -> Result<()> {
         let now = chrono::Utc::now().timestamp_millis();
 
         sqlx::query(
@@ -238,14 +229,12 @@ impl MattermostDbClient {
         .await
         .context("Failed to insert post")?;
 
-        sqlx::query(
-            "UPDATE channels SET lastpostat = $1 WHERE id = $2",
-        )
-        .bind(now)
-        .bind(channelid)
-        .execute(&self.pool)
-        .await
-        .ok();
+        sqlx::query("UPDATE channels SET lastpostat = $1 WHERE id = $2")
+            .bind(now)
+            .bind(channelid)
+            .execute(&self.pool)
+            .await
+            .ok();
 
         tracing::info!("Sent message to channel {channelid}, post_id: {post_id}");
         Ok(post_id)
@@ -261,31 +250,30 @@ impl MattermostDbClient {
         message: &str,
     ) -> Result<String> {
         // Get or create DM channel
-        let channelid = self.get_or_create_dm_channel(bot_userid, target_userid).await?;
+        let channelid = self
+            .get_or_create_dm_channel(bot_userid, target_userid)
+            .await?;
 
         // Add bot to channel if not already member
         self.add_user_to_dm_channel(&channelid, bot_userid).await?;
 
         // Add target user to channel if not already member
-        self.add_user_to_dm_channel(&channelid, target_userid).await?;
+        self.add_user_to_dm_channel(&channelid, target_userid)
+            .await?;
 
         // Send the message as the bot
         let post_id = self.send_message(&channelid, bot_userid, message).await?;
 
-        tracing::info!(
-            "Bot {bot_userid} sent DM to {target_userid}, post_id: {post_id}"
-        );
+        tracing::info!("Bot {bot_userid} sent DM to {target_userid}, post_id: {post_id}");
         Ok(post_id)
     }
 
     /// Get user ID by username
     pub async fn get_userid_by_username(&self, username: &str) -> Result<Option<String>> {
-        let user: Option<(String,)> = sqlx::query_as(
-            "SELECT id FROM users WHERE username = $1",
-        )
-        .bind(username)
-        .fetch_optional(&self.pool)
-        .await?;
+        let user: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE username = $1")
+            .bind(username)
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(user.map(|(id,)| id))
     }
@@ -334,21 +322,23 @@ pub struct ChannelDbInfo {
     pub id: String,
     pub name: String,
     pub displayname: String,
-    pub r#type: String,  // O=public, P=private, D=direct
+    pub r#type: String, // O=public, P=private, D=direct
     pub teamid: Option<String>,
-    pub deleteat: i64,  // > 0 means archived
+    pub deleteat: i64, // > 0 means archived
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_dm_channel_name_format() {
         let user1 = "abc123";
         let user2 = "xyz789";
 
-        let (id1, id2) = if user1 < user2 { (user1, user2) } else { (user2, user1) };
+        let (id1, id2) = if user1 < user2 {
+            (user1, user2)
+        } else {
+            (user2, user1)
+        };
         let name = format!("__{id1}__{id2}__");
 
         assert_eq!(name, "__abc123__xyz789__");

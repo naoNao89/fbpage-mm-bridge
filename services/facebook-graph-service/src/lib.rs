@@ -34,7 +34,9 @@ use crate::handlers::{
     instagram_webhook_verification, reimport_all_conversations, reimport_conversation,
     sync_all_conversations, update_all_avatars, webhook_handler, webhook_verification,
 };
-use crate::services::{CustomerServiceClient, MattermostClient, MattermostDbClient, MessageServiceClient};
+use crate::services::{
+    CustomerServiceClient, MattermostClient, MattermostDbClient, MessageServiceClient,
+};
 use crate::storage::MinioStorage;
 
 /// Application state shared across handlers
