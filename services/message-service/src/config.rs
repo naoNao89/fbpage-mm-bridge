@@ -6,6 +6,7 @@ use std::env;
 pub struct Config {
     /// Database connection URL
     pub database_url: String,
+    pub database_max_connections: u32,
     /// Server bind address (e.g., "0.0.0.0:3002")
     pub bind_address: String,
     /// Log level (e.g., "info", "debug")
@@ -21,6 +22,12 @@ impl Config {
             .or_else(|_| env::var("MESSAGE_SERVICE_DATABASE_URL"))
             .expect("DATABASE_URL or MESSAGE_SERVICE_DATABASE_URL must be set");
 
+        let database_max_connections = env::var("DATABASE_MAX_CONNECTIONS")
+            .or_else(|_| env::var("MESSAGE_SERVICE_DATABASE_MAX_CONNECTIONS"))
+            .unwrap_or_else(|_| "10".to_string())
+            .parse()
+            .unwrap_or(10);
+
         let bind_address = env::var("BIND_ADDRESS")
             .or_else(|_| env::var("MESSAGE_SERVICE_BIND_ADDRESS"))
             .unwrap_or_else(|_| "0.0.0.0:3002".to_string());
@@ -34,6 +41,7 @@ impl Config {
 
         Ok(Self {
             database_url,
+            database_max_connections,
             bind_address,
             log_level,
             customer_service_url,
@@ -46,6 +54,7 @@ impl Default for Config {
         Self {
             database_url: "postgresql://postgres:password@localhost:5432/message_service"
                 .to_string(),
+            database_max_connections: 10,
             bind_address: "0.0.0.0:3002".to_string(),
             log_level: "info".to_string(),
             customer_service_url: "http://localhost:3001".to_string(),

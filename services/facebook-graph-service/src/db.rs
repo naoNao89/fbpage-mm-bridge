@@ -10,9 +10,9 @@ use uuid::Uuid;
 use crate::models::{ImportJob, ImportStatusResponse};
 
 /// Create a database connection pool
-pub async fn create_pool(database_url: &str) -> anyhow::Result<PgPool> {
+pub async fn create_pool(database_url: &str, max_connections: u32) -> anyhow::Result<PgPool> {
     let pool = PgPoolOptions::new()
-        .max_connections(10)
+        .max_connections(max_connections)
         .connect(database_url)
         .await
         .context("Failed to connect to database")?;

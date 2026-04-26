@@ -10,6 +10,7 @@ pub struct Config {
     pub log_level: String,
     /// Database connection URL
     pub database_url: String,
+    pub database_max_connections: u32,
     /// Facebook Page ID
     pub facebook_page_id: String,
     /// Facebook Page Access Token
@@ -35,6 +36,7 @@ pub struct Config {
     pub mattermost_password: Option<String>,
     /// Mattermost database URL (for direct DB access bypassing API)
     pub mattermost_database_url: Option<String>,
+    pub mattermost_database_max_connections: u32,
     /// Rate limit warning threshold (percentage)
     #[serde(default = "default_rate_limit_warning_threshold")]
     pub rate_limit_warning_threshold: f32,
@@ -100,6 +102,10 @@ impl Config {
             bind_address: env::var("BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:3003".to_string()),
             log_level: env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
             database_url: env::var("DATABASE_URL").context("DATABASE_URL must be set")?,
+            database_max_connections: env::var("DATABASE_MAX_CONNECTIONS")
+                .unwrap_or_else(|_| "10".to_string())
+                .parse()
+                .unwrap_or(10),
             facebook_page_id: env::var("FACEBOOK_PAGE_ID")
                 .context("FACEBOOK_PAGE_ID must be set")?,
             facebook_page_access_token: env::var("FACEBOOK_PAGE_ACCESS_TOKEN")
@@ -121,6 +127,10 @@ impl Config {
                 .unwrap_or_else(|_| "admin".to_string()),
             mattermost_password: env::var("MATTERMOST_PASSWORD").ok(),
             mattermost_database_url: env::var("MATTERMOST_DATABASE_URL").ok(),
+            mattermost_database_max_connections: env::var("MATTERMOST_DATABASE_MAX_CONNECTIONS")
+                .unwrap_or_else(|_| "5".to_string())
+                .parse()
+                .unwrap_or(5),
             rate_limit_warning_threshold: env::var("RATE_LIMIT_WARNING_THRESHOLD")
                 .unwrap_or_else(|_| "80.0".to_string())
                 .parse()

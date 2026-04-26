@@ -22,9 +22,9 @@ impl MattermostDbClient {
     ///
     /// Connection string format:
     /// `postgres://user:password@host:5432/mattermost`
-    pub async fn new(database_url: &str) -> Result<Self> {
+    pub async fn new(database_url: &str, max_connections: u32) -> Result<Self> {
         let pool = PgPoolOptions::new()
-            .max_connections(5)
+            .max_connections(max_connections)
             .connect(database_url)
             .await
             .context("Failed to connect to Mattermost database")?;
