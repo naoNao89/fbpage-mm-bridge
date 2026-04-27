@@ -132,14 +132,20 @@ async fn poll_and_respond(
                 continue;
             }
 
-            let psid =
-                match lookup_psid(&channel.name, message_service_url, customer_service_url).await {
-                    Ok(p) => p,
-                    Err(e) => {
-                        warn!("Could not find PSID for conv {}: {e}", channel.name);
-                        continue;
-                    }
-                };
+            let psid = match lookup_psid(
+                http,
+                &channel.name,
+                message_service_url,
+                customer_service_url,
+            )
+            .await
+            {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!("Could not find PSID for conv {}: {e}", channel.name);
+                    continue;
+                }
+            };
 
             let fb_url =
                 format!("https://graph.facebook.com/v24.0/me/messages?access_token={fb_token}");
@@ -218,6 +224,7 @@ async fn poll_and_respond(
 }
 
 async fn lookup_psid(
+    http: &Client,
     conversation_id: &str,
     message_service_url: &str,
     customer_service_url: &str,
@@ -239,9 +246,10 @@ async fn lookup_psid(
         message_service_url.trim_end_matches('/')
     );
 
-    let resp = reqwest::get(&msg_url)
-        .await
-        .with_context(|| format!("Failed to call message service for conv {conversation_id}"))?;
+    let resp =
+        http.get(&msg_url).send().await.with_context(|| {
+            format!("Failed to call message service for conv {conversation_id}")
+        })?;
 
     if resp.status().as_u16() == 404 {
         anyhow::bail!("No messages found for conversation {conversation_id}");
@@ -265,7 +273,7 @@ async fn lookup_psid(
         msg_resp.customer_id
     );
 
-    let cust_resp = reqwest::get(&cust_url).await.with_context(|| {
+    let cust_resp = http.get(&cust_url).send().await.with_context(|| {
         format!(
             "Failed to call customer service for {}",
             msg_resp.customer_id

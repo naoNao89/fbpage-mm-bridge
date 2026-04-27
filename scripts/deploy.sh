@@ -18,7 +18,7 @@ if [ ! -d "$STACK_DIR/.git" ]; then
 else
   cd "$STACK_DIR"
   git fetch --depth=1 origin "$BRANCH"
-  git reset --hard FETCH_HEAD
+  git checkout -B "$BRANCH" FETCH_HEAD
 fi
 cd "$STACK_DIR"
 
@@ -76,6 +76,10 @@ DATABASE_URL=postgres://${USER}:${PW}@customer-db:5432/customer_service
 POSTGRES_USER=${USER}
 POSTGRES_PASSWORD=${PW}
 CUSTOMER_SERVICE_DB=customer_service
+CUSTOMER_SERVICE_DATABASE_MAX_CONNECTIONS=$(env_merge CUSTOMER_SERVICE_DATABASE_MAX_CONNECTIONS 10)
+MESSAGE_SERVICE_DATABASE_MAX_CONNECTIONS=$(env_merge MESSAGE_SERVICE_DATABASE_MAX_CONNECTIONS 10)
+FACEBOOK_GRAPH_DATABASE_MAX_CONNECTIONS=$(env_merge FACEBOOK_GRAPH_DATABASE_MAX_CONNECTIONS 10)
+MATTERMOST_DATABASE_MAX_CONNECTIONS=$(env_merge MATTERMOST_DATABASE_MAX_CONNECTIONS 5)
 CUSTOMER_SERVICE_URL=http://customer-service:3001
 MESSAGE_SERVICE_URL=http://message-service:3002
 MATTERMOST_URL=http://mattermost:8065
@@ -246,7 +250,7 @@ for service in customer-service message-service facebook-graph-service mm-bridge
   for attempt in $(seq 1 12); do
     CONTAINER_ID=$(docker compose ps -q "$service" 2>/dev/null || true)
     if [ -n "$CONTAINER_ID" ]; then
-      CONTAINER_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_ID" 2>/dev/null || echo "no-healthcheck")
+      CONTAINER_STATUS=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "$CONTAINER_ID" 2>/dev/null || echo "no-healthcheck")
       if [ "$CONTAINER_STATUS" = "healthy" ] || [ "$CONTAINER_STATUS" = "no-healthcheck" ]; then
         echo "[PASS] $service: ready"
         break

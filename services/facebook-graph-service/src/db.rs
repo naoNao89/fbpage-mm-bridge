@@ -2,7 +2,6 @@
 
 use anyhow::Context;
 use chrono::{DateTime, Utc};
-use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use tracing::info;
 use uuid::Uuid;
@@ -10,12 +9,8 @@ use uuid::Uuid;
 use crate::models::{ImportJob, ImportStatusResponse};
 
 /// Create a database connection pool
-pub async fn create_pool(database_url: &str) -> anyhow::Result<PgPool> {
-    let pool = PgPoolOptions::new()
-        .max_connections(10)
-        .connect(database_url)
-        .await
-        .context("Failed to connect to database")?;
+pub async fn create_pool(database_url: &str, max_connections: u32) -> anyhow::Result<PgPool> {
+    let pool = shared_utils::create_pg_pool(database_url, max_connections).await?;
 
     info!("Database connection pool created");
     Ok(pool)

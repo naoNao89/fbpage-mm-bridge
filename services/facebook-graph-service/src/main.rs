@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting Facebook Graph Service...");
     info!("Configuration: {:?}", config);
 
-    let pool = db::create_pool(&config.database_url).await?;
+    let pool = db::create_pool(&config.database_url, config.database_max_connections).await?;
     run_migrations(&pool).await?;
 
     let customer_client =
@@ -32,16 +32,19 @@ async fn main() -> anyhow::Result<()> {
     .await;
 
     let mattermost_db = match &config.mattermost_database_url {
-        Some(db_url) => match MattermostDbClient::new(db_url).await {
-            Ok(client) => {
-                info!("Mattermost DB client initialized (direct DB access enabled)");
-                Some(client)
+        Some(db_url) => {
+            match MattermostDbClient::new(db_url, config.mattermost_database_max_connections).await
+            {
+                Ok(client) => {
+                    info!("Mattermost DB client initialized (direct DB access enabled)");
+                    Some(client)
+                }
+                Err(e) => {
+                    warn!("Failed to initialize Mattermost DB client: {}. Direct DB operations will be disabled.", e);
+                    None
+                }
             }
-            Err(e) => {
-                warn!("Failed to initialize Mattermost DB client: {}. Direct DB operations will be disabled.", e);
-                None
-            }
-        },
+        }
         None => {
             info!("MATTERMOST_DATABASE_URL not set - direct DB access disabled");
             None

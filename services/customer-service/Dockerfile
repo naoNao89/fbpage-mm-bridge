@@ -12,22 +12,26 @@ COPY services/customer-service/Cargo.toml services/customer-service/
 COPY services/message-service/Cargo.toml services/message-service/
 COPY services/facebook-graph-service/Cargo.toml services/facebook-graph-service/
 COPY services/mm-bridge-bot/Cargo.toml services/mm-bridge-bot/
+COPY services/shared-utils/Cargo.toml services/shared-utils/
 
 RUN mkdir -p services/customer-service/src && \
     mkdir -p services/message-service/src && \
     mkdir -p services/facebook-graph-service/src && \
     mkdir -p services/mm-bridge-bot/src && \
+    mkdir -p services/shared-utils/src && \
     echo 'fn main() {}' > services/customer-service/src/main.rs && \
     echo 'fn main() {}' > services/message-service/src/main.rs && \
     echo 'fn main() {}' > services/facebook-graph-service/src/main.rs && \
-    echo 'fn main() {}' > services/mm-bridge-bot/src/main.rs
+    echo 'fn main() {}' > services/mm-bridge-bot/src/main.rs && \
+    echo '' > services/shared-utils/src/lib.rs
 
 RUN cargo build --release --package customer-service
 
 COPY services/customer-service/src services/customer-service/src
 COPY services/customer-service/migrations services/customer-service/migrations
+COPY services/shared-utils/src services/shared-utils/src
 
-RUN touch services/customer-service/src/main.rs
+RUN touch services/customer-service/src/main.rs services/shared-utils/src/lib.rs
 
 RUN cargo build --release --package customer-service
 

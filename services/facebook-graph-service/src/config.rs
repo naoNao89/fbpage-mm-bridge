@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use shared_utils::env_u32;
 use std::env;
 
 /// Application configuration
@@ -10,6 +11,7 @@ pub struct Config {
     pub log_level: String,
     /// Database connection URL
     pub database_url: String,
+    pub database_max_connections: u32,
     /// Facebook Page ID
     pub facebook_page_id: String,
     /// Facebook Page Access Token
@@ -35,6 +37,7 @@ pub struct Config {
     pub mattermost_password: Option<String>,
     /// Mattermost database URL (for direct DB access bypassing API)
     pub mattermost_database_url: Option<String>,
+    pub mattermost_database_max_connections: u32,
     /// Rate limit warning threshold (percentage)
     #[serde(default = "default_rate_limit_warning_threshold")]
     pub rate_limit_warning_threshold: f32,
@@ -100,6 +103,7 @@ impl Config {
             bind_address: env::var("BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:3003".to_string()),
             log_level: env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
             database_url: env::var("DATABASE_URL").context("DATABASE_URL must be set")?,
+            database_max_connections: env_u32("DATABASE_MAX_CONNECTIONS", 10),
             facebook_page_id: env::var("FACEBOOK_PAGE_ID")
                 .context("FACEBOOK_PAGE_ID must be set")?,
             facebook_page_access_token: env::var("FACEBOOK_PAGE_ACCESS_TOKEN")
@@ -121,6 +125,7 @@ impl Config {
                 .unwrap_or_else(|_| "admin".to_string()),
             mattermost_password: env::var("MATTERMOST_PASSWORD").ok(),
             mattermost_database_url: env::var("MATTERMOST_DATABASE_URL").ok(),
+            mattermost_database_max_connections: env_u32("MATTERMOST_DATABASE_MAX_CONNECTIONS", 5),
             rate_limit_warning_threshold: env::var("RATE_LIMIT_WARNING_THRESHOLD")
                 .unwrap_or_else(|_| "80.0".to_string())
                 .parse()
@@ -165,3 +170,106 @@ impl fmt::Display for Config {
 }
 
 use anyhow::Context;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    use std::sync::{Mutex, OnceLock};
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn with_env_lock<T>(test: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        test()
+    }
+
+    fn clear_env() {
+        for key in [
+            "BIND_ADDRESS",
+            "LOG_LEVEL",
+            "DATABASE_URL",
+            "DATABASE_MAX_CONNECTIONS",
+            "FACEBOOK_PAGE_ID",
+            "FACEBOOK_PAGE_ACCESS_TOKEN",
+            "FACEBOOK_APP_ID",
+            "FACEBOOK_APP_SECRET",
+            "FACEBOOK_WEBHOOK_VERIFY_TOKEN",
+            "INSTAGRAM_IG_USER_ID",
+            "INSTAGRAM_WEBHOOK_VERIFY_TOKEN",
+            "CUSTOMER_SERVICE_URL",
+            "MESSAGE_SERVICE_URL",
+            "MATTERMOST_URL",
+            "MATTERMOST_USERNAME",
+            "MATTERMOST_PASSWORD",
+            "MATTERMOST_DATABASE_URL",
+            "MATTERMOST_DATABASE_MAX_CONNECTIONS",
+            "RATE_LIMIT_WARNING_THRESHOLD",
+            "RATE_LIMIT_CRITICAL_THRESHOLD",
+            "POLL_INTERVAL_SECS",
+            "MINIO_ENDPOINT",
+            "MINIO_ACCESS_KEY",
+            "MINIO_SECRET_KEY",
+            "MINIO_BUCKET",
+            "MINIO_PRESIGNED_TTL_SECS",
+        ] {
+            env::remove_var(key);
+        }
+    }
+
+    fn set_required_env() {
+        env::set_var("DATABASE_URL", "postgres://facebook");
+        env::set_var("FACEBOOK_PAGE_ID", "page-id");
+        env::set_var("FACEBOOK_PAGE_ACCESS_TOKEN", "page-token");
+        env::set_var("CUSTOMER_SERVICE_URL", "http://customer:3001");
+        env::set_var("MESSAGE_SERVICE_URL", "http://message:3002");
+    }
+
+    #[test]
+    fn from_env_uses_database_pool_defaults() {
+        with_env_lock(|| {
+            clear_env();
+            set_required_env();
+
+            let config = Config::from_env().unwrap();
+
+            clear_env();
+            assert_eq!(config.database_max_connections, 10);
+            assert_eq!(config.mattermost_database_max_connections, 5);
+            assert_eq!(config.mattermost_url, "http://localhost:8065");
+            assert_eq!(config.mattermost_username, "admin");
+        });
+    }
+
+    #[test]
+    fn from_env_reads_database_pool_overrides() {
+        with_env_lock(|| {
+            clear_env();
+            set_required_env();
+            env::set_var("DATABASE_MAX_CONNECTIONS", "31");
+            env::set_var("MATTERMOST_DATABASE_MAX_CONNECTIONS", "7");
+
+            let config = Config::from_env().unwrap();
+
+            clear_env();
+            assert_eq!(config.database_max_connections, 31);
+            assert_eq!(config.mattermost_database_max_connections, 7);
+        });
+    }
+
+    #[test]
+    fn from_env_defaults_invalid_database_pool_overrides() {
+        with_env_lock(|| {
+            clear_env();
+            set_required_env();
+            env::set_var("DATABASE_MAX_CONNECTIONS", "invalid");
+            env::set_var("MATTERMOST_DATABASE_MAX_CONNECTIONS", "invalid");
+
+            let config = Config::from_env().unwrap();
+
+            clear_env();
+            assert_eq!(config.database_max_connections, 10);
+            assert_eq!(config.mattermost_database_max_connections, 5);
+        });
+    }
+}

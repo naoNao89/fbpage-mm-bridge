@@ -18,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create database connection pool
     info!("Connecting to database...");
-    let pool = db::create_pool(&config.database_url).await?;
+    let pool = db::create_pool(&config.database_url, config.database_max_connections).await?;
 
     // Run migrations
     info!("Running database migrations...");

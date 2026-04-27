@@ -1,16 +1,11 @@
 use crate::models::{Customer, ListCustomersQuery};
 use anyhow::Result;
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use sqlx::PgPool;
 use uuid::Uuid;
 
 /// Create a database connection pool
-pub async fn create_pool(database_url: &str) -> Result<PgPool> {
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(database_url)
-        .await?;
-
-    Ok(pool)
+pub async fn create_pool(database_url: &str, max_connections: u32) -> Result<PgPool> {
+    shared_utils::create_pg_pool(database_url, max_connections).await
 }
 
 /// Get or create a customer by platform user ID
