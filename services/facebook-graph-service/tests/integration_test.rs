@@ -5,6 +5,71 @@
 
 #[cfg(test)]
 mod tests {
+    mod docker_admin_api_tests {
+        use reqwest::StatusCode;
+
+        fn service_url() -> Option<String> {
+            std::env::var("FACEBOOK_GRAPH_SERVICE_URL").ok()
+        }
+
+        fn admin_token() -> String {
+            std::env::var("MM_ADMIN_API_TOKEN").unwrap_or_else(|_| "test-admin-token".to_string())
+        }
+
+        #[tokio::test]
+        async fn docker_admin_health_requires_bearer_and_reports_default_off_mode() {
+            let Some(base_url) = service_url() else {
+                return;
+            };
+            let client = reqwest::Client::new();
+
+            let no_token = client
+                .get(format!("{base_url}/api/mm-admin/health"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(no_token.status(), StatusCode::UNAUTHORIZED);
+
+            let wrong_token = client
+                .get(format!("{base_url}/api/mm-admin/health"))
+                .bearer_auth("wrong-token")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(wrong_token.status(), StatusCode::UNAUTHORIZED);
+
+            let ok = client
+                .get(format!("{base_url}/api/mm-admin/health"))
+                .bearer_auth(admin_token())
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(ok.status(), StatusCode::OK);
+            let json: serde_json::Value = ok.json().await.unwrap();
+            assert_eq!(json["mode"], "off");
+        }
+
+        #[tokio::test]
+        async fn docker_mutating_admin_routes_are_blocked_by_default_off_mode() {
+            let Some(base_url) = service_url() else {
+                return;
+            };
+            let client = reqwest::Client::new();
+            let response = client
+                .delete(format!(
+                    "{base_url}/api/mm-admin/channels/test-channel/posts"
+                ))
+                .bearer_auth(admin_token())
+                .send()
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            let json: serde_json::Value = response.json().await.unwrap();
+            assert_eq!(json["error"], "Mattermost bypass mode is not enabled");
+        }
+    }
+
     mod real_api_tests {
         use chrono::Utc;
         use facebook_graph_service::config::Config;

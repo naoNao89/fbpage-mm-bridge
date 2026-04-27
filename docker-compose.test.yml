@@ -142,6 +142,9 @@ services:
       - FACEBOOK_APP_SECRET=${FACEBOOK_APP_SECRET:-test_secret}
       - CUSTOMER_SERVICE_URL=http://customer-service:3001
       - MESSAGE_SERVICE_URL=http://message-service:3002
+      - MATTERMOST_DATABASE_URL=${MATTERMOST_DATABASE_URL:-}
+      - MATTERMOST_BYPASS_MODE=${MATTERMOST_BYPASS_MODE:-off}
+      - MM_ADMIN_API_TOKEN=${MM_ADMIN_API_TOKEN:-test-admin-token}
     depends_on:
       facebook-db:
         condition: service_healthy
@@ -177,6 +180,7 @@ services:
       - CUSTOMER_SERVICE_URL=http://customer-service:3001
       - MESSAGE_SERVICE_URL=http://message-service:3002
       - FACEBOOK_GRAPH_SERVICE_URL=http://facebook-graph-service:3003
+      - MM_ADMIN_API_TOKEN=${MM_ADMIN_API_TOKEN:-test-admin-token}
       # Test configuration
       - TEST_LOG_LEVEL=${TEST_LOG_LEVEL:-debug}
       - WAIT_TIMEOUT=300

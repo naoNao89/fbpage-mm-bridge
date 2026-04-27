@@ -158,13 +158,15 @@ impl MattermostDbClient {
         }
 
         // Create new DM channel
-        let channelid = uuid::Uuid::new_v4().to_string();
+        let channelid = new_mattermost_id();
         let now = chrono::Utc::now().timestamp_millis();
 
         sqlx::query(
             r#"
-            INSERT INTO channels (id, name, displayname, type, teamid, createat, updateat, deleteat, header, purpose)
-            VALUES ($1, $2, 'Direct Message', 'D', NULL, $3, $3, 0, '', '')
+            INSERT INTO channels
+              (id, name, displayname, type, teamid, createat, updateat, deleteat, header, purpose,
+               lastpostat, totalmsgcount, totalmsgcountroot)
+            VALUES ($1, $2, 'Direct Message', 'D', NULL, $3, $3, 0, '', '', 0, 0, 0)
             "#,
         )
         .bind(&channelid)
@@ -214,7 +216,7 @@ impl MattermostDbClient {
         userid: &str,
         message: &str,
     ) -> Result<String> {
-        let post_id = uuid::Uuid::new_v4().to_string();
+        let post_id = new_mattermost_id();
         let now = chrono::Utc::now().timestamp_millis();
 
         // NOTE: Mattermost's `posts` table requires several NOT NULL columns
@@ -245,14 +247,15 @@ impl MattermostDbClient {
         sqlx::query(
             "UPDATE channels
              SET lastpostat = $1,
-                 totalmsgcount = totalmsgcount + 1
+                 totalmsgcount = COALESCE(totalmsgcount, 0) + 1,
+                 totalmsgcountroot = COALESCE(totalmsgcountroot, 0) + 1
              WHERE id = $2",
         )
         .bind(now)
         .bind(channelid)
         .execute(&self.pool)
         .await
-        .ok();
+        .context("Failed to update channel counters")?;
 
         tracing::info!("Sent message to channel {channelid}, post_id: {post_id}");
         Ok(post_id)
@@ -261,29 +264,203 @@ impl MattermostDbClient {
     /// Send a DM from bot to user directly via database
     ///
     /// This is the primary use case - bots cannot send DMs via API in Team Edition.
+    /// All four writes (channel upsert, two member upserts, post insert) run in
+    /// a single transaction so a partial DM never appears.
+    ///
+    /// Returns `(post_id, channel_id)`.
     pub async fn send_bot_dm(
         &self,
         bot_userid: &str,
         target_userid: &str,
         message: &str,
-    ) -> Result<String> {
-        // Get or create DM channel
-        let channelid = self
-            .get_or_create_dm_channel(bot_userid, target_userid)
-            .await?;
+    ) -> Result<(String, String)> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .context("Failed to begin DM transaction")?;
 
-        // Add bot to channel if not already member
-        self.add_user_to_dm_channel(&channelid, bot_userid).await?;
+        let (id1, id2) = if bot_userid < target_userid {
+            (bot_userid, target_userid)
+        } else {
+            (target_userid, bot_userid)
+        };
+        let channel_name = format!("__{id1}__{id2}__");
+        let now = chrono::Utc::now().timestamp_millis();
 
-        // Add target user to channel if not already member
-        self.add_user_to_dm_channel(&channelid, target_userid)
-            .await?;
+        // Upsert DM channel (find by name, unarchive if archived, else insert).
+        let existing: Option<(String, i64)> =
+            sqlx::query_as("SELECT id, deleteat FROM channels WHERE name = $1 AND type = 'D'")
+                .bind(&channel_name)
+                .fetch_optional(&mut *tx)
+                .await?;
 
-        // Send the message as the bot
-        let post_id = self.send_message(&channelid, bot_userid, message).await?;
+        let channelid = match existing {
+            Some((id, deleteat)) => {
+                if deleteat > 0 {
+                    sqlx::query("UPDATE channels SET deleteat = 0, updateat = $1 WHERE id = $2")
+                        .bind(now)
+                        .bind(&id)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+                id
+            }
+            None => {
+                let new_id = new_mattermost_id();
+                sqlx::query(
+                    r#"
+                    INSERT INTO channels
+                      (id, name, displayname, type, teamid, createat, updateat,
+                       deleteat, header, purpose, lastpostat, totalmsgcount, totalmsgcountroot)
+                    VALUES
+                      ($1, $2, 'Direct Message', 'D', NULL, $3, $3, 0, '', '', 0, 0, 0)
+                    "#,
+                )
+                .bind(&new_id)
+                .bind(&channel_name)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .context("Failed to create DM channel")?;
+                new_id
+            }
+        };
 
-        tracing::info!("Bot {bot_userid} sent DM to {target_userid}, post_id: {post_id}");
-        Ok(post_id)
+        for member in [bot_userid, target_userid] {
+            sqlx::query(
+                r#"
+                INSERT INTO channelmembers
+                  (channelid, userid, roles, lastviewedat, msgcount, msgcountroot, mentioncount, mentioncountroot, urgentmentioncount, notifyprops)
+                VALUES ($1, $2, 'channel_user', $3, 0, 0, 0, 0, 0, '{}')
+                ON CONFLICT (channelid, userid) DO NOTHING
+                "#,
+            )
+            .bind(&channelid)
+            .bind(member)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .context("Failed to add member to DM channel")?;
+        }
+
+        let post_id = new_mattermost_id();
+        sqlx::query(
+            r#"
+            INSERT INTO posts
+              (id, channelid, userid, message, createat, updateat, editat, deleteat,
+               rootid, originalid, type, hashtags, fileids, hasreactions, props)
+            VALUES
+              ($1, $2, $3, $4, $5, $5, 0, 0, '', '', '', '', '[]', false, '{}')
+            "#,
+        )
+        .bind(&post_id)
+        .bind(&channelid)
+        .bind(bot_userid)
+        .bind(message)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .context("Failed to insert DM post")?;
+
+        sqlx::query(
+            "UPDATE channels
+             SET lastpostat = $1,
+                 totalmsgcount = COALESCE(totalmsgcount, 0) + 1,
+                 totalmsgcountroot = COALESCE(totalmsgcountroot, 0) + 1
+             WHERE id = $2",
+        )
+        .bind(now)
+        .bind(&channelid)
+        .execute(&mut *tx)
+        .await
+        .context("Failed to update DM channel counters")?;
+
+        sqlx::query(
+            "UPDATE channelmembers
+             SET msgcount = COALESCE(msgcount, 0) + 1,
+                 msgcountroot = COALESCE(msgcountroot, 0) + 1,
+                 lastupdateat = $1
+             WHERE channelid = $2 AND userid <> $3",
+        )
+        .bind(now)
+        .bind(&channelid)
+        .bind(bot_userid)
+        .execute(&mut *tx)
+        .await
+        .context("Failed to update DM recipient counters")?;
+
+        tx.commit()
+            .await
+            .context("Failed to commit DM transaction")?;
+
+        tracing::info!(
+            "Bot {bot_userid} sent DM to {target_userid}, channel={channelid}, post_id={post_id}"
+        );
+        Ok((post_id, channelid))
+    }
+
+    /// Soft-delete every post in a channel by setting `deleteat` for all
+    /// non-deleted rows in a single statement. Returns the number of rows
+    /// flipped (NOT the number of posts in the channel).
+    ///
+    /// This is the DB-bypass equivalent of the per-post `DELETE /api/v4/posts/{id}`
+    /// loop used by reimport flows. For a channel with N posts it is one
+    /// statement instead of N HTTP round-trips, which removes the rate-limit
+    /// risk entirely.
+    pub async fn soft_delete_all_posts_in_channel(&self, channelid: &str) -> Result<u64> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .context("Failed to begin soft-delete transaction")?;
+
+        let result = sqlx::query(
+            "UPDATE posts SET deleteat = $1, updateat = $1
+             WHERE channelid = $2 AND deleteat = 0",
+        )
+        .bind(now)
+        .bind(channelid)
+        .execute(&mut *tx)
+        .await
+        .context("Failed to soft-delete posts")?;
+
+        sqlx::query(
+            "UPDATE channels
+             SET lastpostat = 0,
+                 totalmsgcount = 0,
+                 totalmsgcountroot = 0
+             WHERE id = $1",
+        )
+        .bind(channelid)
+        .execute(&mut *tx)
+        .await
+        .context("Failed to reset channel counters after soft-delete")?;
+
+        tx.commit()
+            .await
+            .context("Failed to commit soft-delete transaction")?;
+
+        let affected = result.rows_affected();
+        tracing::info!("DB-bypass: soft-deleted {affected} posts in channel {channelid}");
+        Ok(affected)
+    }
+
+    /// Read the Mattermost server version from the `systems` table.
+    ///
+    /// Used at startup to verify the running Mattermost matches what this
+    /// crate's SQL was written against. Returns `None` if the row is missing
+    /// or the query errors (older Mattermost installs may use a different
+    /// key, in which case the caller should treat as "unknown" rather than
+    /// fatal).
+    pub async fn schema_version(&self) -> Result<Option<String>> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT value FROM systems WHERE name = 'Version' LIMIT 1")
+                .fetch_optional(&self.pool)
+                .await
+                .context("Failed to read systems.Version")?;
+        Ok(row.map(|(v,)| v))
     }
 
     /// Get user ID by username
@@ -332,6 +509,15 @@ impl MattermostDbClient {
 
         Ok(channels)
     }
+}
+
+fn new_mattermost_id() -> String {
+    uuid::Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(26)
+        .collect()
 }
 
 /// Channel information from database

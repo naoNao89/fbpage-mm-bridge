@@ -1,9 +1,44 @@
 use serde::Deserialize;
 use shared_utils::env_u32;
 use std::env;
+use std::str::FromStr;
+
+/// Controls whether Mattermost direct-DB-bypass operations are available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BypassMode {
+    Off,
+    Shadow,
+    Enabled,
+}
+
+impl BypassMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BypassMode::Off => "off",
+            BypassMode::Shadow => "shadow",
+            BypassMode::Enabled => "enabled",
+        }
+    }
+}
+
+impl FromStr for BypassMode {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "off" => Ok(BypassMode::Off),
+            "shadow" => Ok(BypassMode::Shadow),
+            "enabled" => Ok(BypassMode::Enabled),
+            other => Err(anyhow::anyhow!(
+                "invalid MATTERMOST_BYPASS_MODE {other:?}; expected off|shadow|enabled"
+            )),
+        }
+    }
+}
 
 /// Application configuration
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Config {
     /// Server bind address
     pub bind_address: String,
@@ -38,6 +73,10 @@ pub struct Config {
     /// Mattermost database URL (for direct DB access bypassing API)
     pub mattermost_database_url: Option<String>,
     pub mattermost_database_max_connections: u32,
+    /// Mattermost DB-bypass mode (`off`, `shadow`, `enabled`)
+    pub mattermost_bypass_mode: BypassMode,
+    /// Bearer token required for `/api/mm-admin/*`
+    pub mm_admin_api_token: Option<String>,
     /// Rate limit warning threshold (percentage)
     #[serde(default = "default_rate_limit_warning_threshold")]
     pub rate_limit_warning_threshold: f32,
@@ -126,6 +165,13 @@ impl Config {
             mattermost_password: env::var("MATTERMOST_PASSWORD").ok(),
             mattermost_database_url: env::var("MATTERMOST_DATABASE_URL").ok(),
             mattermost_database_max_connections: env_u32("MATTERMOST_DATABASE_MAX_CONNECTIONS", 5),
+            mattermost_bypass_mode: env::var("MATTERMOST_BYPASS_MODE")
+                .unwrap_or_else(|_| "off".to_string())
+                .parse()
+                .unwrap_or(BypassMode::Off),
+            mm_admin_api_token: env::var("MM_ADMIN_API_TOKEN")
+                .ok()
+                .filter(|token| !token.is_empty()),
             rate_limit_warning_threshold: env::var("RATE_LIMIT_WARNING_THRESHOLD")
                 .unwrap_or_else(|_| "80.0".to_string())
                 .parse()
@@ -154,6 +200,59 @@ impl Config {
 }
 
 use std::fmt;
+impl fmt::Debug for Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Config")
+            .field("bind_address", &self.bind_address)
+            .field("log_level", &self.log_level)
+            .field("database_url", &"<redacted>")
+            .field("database_max_connections", &self.database_max_connections)
+            .field("facebook_page_id", &self.facebook_page_id)
+            .field("facebook_page_access_token", &"<redacted>")
+            .field("facebook_app_id", &self.facebook_app_id)
+            .field("facebook_app_secret", &"<redacted>")
+            .field("facebook_webhook_verify_token", &"<redacted>")
+            .field("instagram_ig_user_id", &self.instagram_ig_user_id)
+            .field("instagram_webhook_verify_token", &"<redacted>")
+            .field("customer_service_url", &self.customer_service_url)
+            .field("message_service_url", &self.message_service_url)
+            .field("mattermost_url", &self.mattermost_url)
+            .field("mattermost_username", &self.mattermost_username)
+            .field(
+                "mattermost_password",
+                &self.mattermost_password.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "mattermost_database_url",
+                &self.mattermost_database_url.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "mattermost_database_max_connections",
+                &self.mattermost_database_max_connections,
+            )
+            .field("mattermost_bypass_mode", &self.mattermost_bypass_mode)
+            .field(
+                "mm_admin_api_token",
+                &self.mm_admin_api_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "rate_limit_warning_threshold",
+                &self.rate_limit_warning_threshold,
+            )
+            .field(
+                "rate_limit_critical_threshold",
+                &self.rate_limit_critical_threshold,
+            )
+            .field("poll_interval_secs", &self.poll_interval_secs)
+            .field("minio_endpoint", &self.minio_endpoint)
+            .field("minio_access_key", &self.minio_access_key)
+            .field("minio_secret_key", &"<redacted>")
+            .field("minio_bucket", &self.minio_bucket)
+            .field("minio_presigned_ttl_secs", &self.minio_presigned_ttl_secs)
+            .finish()
+    }
+}
+
 impl fmt::Display for Config {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -204,6 +303,8 @@ mod tests {
             "MATTERMOST_PASSWORD",
             "MATTERMOST_DATABASE_URL",
             "MATTERMOST_DATABASE_MAX_CONNECTIONS",
+            "MATTERMOST_BYPASS_MODE",
+            "MM_ADMIN_API_TOKEN",
             "RATE_LIMIT_WARNING_THRESHOLD",
             "RATE_LIMIT_CRITICAL_THRESHOLD",
             "POLL_INTERVAL_SECS",
@@ -236,6 +337,7 @@ mod tests {
             clear_env();
             assert_eq!(config.database_max_connections, 10);
             assert_eq!(config.mattermost_database_max_connections, 5);
+            assert_eq!(config.mattermost_bypass_mode, BypassMode::Off);
             assert_eq!(config.mattermost_url, "http://localhost:8065");
             assert_eq!(config.mattermost_username, "admin");
         });
@@ -270,6 +372,75 @@ mod tests {
             clear_env();
             assert_eq!(config.database_max_connections, 10);
             assert_eq!(config.mattermost_database_max_connections, 5);
+        });
+    }
+
+    #[test]
+    fn from_env_defaults_invalid_bypass_mode_to_off() {
+        with_env_lock(|| {
+            clear_env();
+            set_required_env();
+            env::set_var("MATTERMOST_BYPASS_MODE", "hacker-mode");
+
+            let config = Config::from_env().unwrap();
+
+            clear_env();
+            assert_eq!(config.mattermost_bypass_mode, BypassMode::Off);
+        });
+    }
+
+    #[test]
+    fn from_env_treats_empty_admin_token_as_unset() {
+        with_env_lock(|| {
+            clear_env();
+            set_required_env();
+            env::set_var("MM_ADMIN_API_TOKEN", "");
+
+            let config = Config::from_env().unwrap();
+
+            clear_env();
+            assert!(config.mm_admin_api_token.is_none());
+        });
+    }
+
+    #[test]
+    fn debug_redacts_secrets() {
+        with_env_lock(|| {
+            clear_env();
+            set_required_env();
+            env::set_var("DATABASE_URL", "postgres://user:secret@db/facebook");
+            env::set_var("FACEBOOK_PAGE_ACCESS_TOKEN", "page-secret-token");
+            env::set_var("FACEBOOK_APP_SECRET", "app-secret");
+            env::set_var("FACEBOOK_WEBHOOK_VERIFY_TOKEN", "webhook-secret");
+            env::set_var("INSTAGRAM_WEBHOOK_VERIFY_TOKEN", "ig-webhook-secret");
+            env::set_var("MATTERMOST_PASSWORD", "mattermost-secret");
+            env::set_var(
+                "MATTERMOST_DATABASE_URL",
+                "postgres://mm:mm-secret@db/mattermost",
+            );
+            env::set_var("MM_ADMIN_API_TOKEN", "admin-secret-token");
+            env::set_var("MINIO_SECRET_KEY", "minio-secret");
+
+            let debug = format!("{:?}", Config::from_env().unwrap());
+
+            clear_env();
+            assert!(debug.contains("<redacted>"));
+            for secret in [
+                "secret@db",
+                "page-secret-token",
+                "app-secret",
+                "webhook-secret",
+                "ig-webhook-secret",
+                "mattermost-secret",
+                "mm-secret",
+                "admin-secret-token",
+                "minio-secret",
+            ] {
+                assert!(
+                    !debug.contains(secret),
+                    "debug output leaked secret fragment: {secret}"
+                );
+            }
         });
     }
 }

@@ -11,6 +11,7 @@
 //! - `GET /api/status` - Get import status
 //! - `POST /api/token/exchange` - Exchange short-lived token for long-lived token
 
+pub mod auth;
 pub mod config;
 pub mod db;
 pub mod graph_api;
@@ -23,7 +24,7 @@ pub mod services;
 pub mod storage;
 
 use axum::{
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 
@@ -35,7 +36,8 @@ use crate::handlers::{
     sync_all_conversations, update_all_avatars, webhook_handler, webhook_verification,
 };
 use crate::services::{
-    CustomerServiceClient, MattermostClient, MattermostDbClient, MessageServiceClient,
+    CustomerServiceClient, MattermostClient, MattermostDbClient, MattermostOps,
+    MessageServiceClient,
 };
 use crate::storage::MinioStorage;
 
@@ -48,6 +50,7 @@ pub struct AppState {
     pub message_client: MessageServiceClient,
     pub mattermost_client: MattermostClient,
     pub mattermost_db: Option<MattermostDbClient>,
+    pub mattermost_ops: MattermostOps,
     pub minio: Option<MinioStorage>,
     /// Cache: customer PSID → Facebook conversation ID (t_xxx format)
     /// Used by webhook handler to resolve conversation_id without per-request Graph API calls.
@@ -79,6 +82,23 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/status", get(get_import_status))
         .route("/api/token/exchange", post(exchange_token))
         .route("/api/update-avatars", post(update_all_avatars))
+        .route(
+            "/api/mm-admin/health",
+            get(handlers::mm_admin::admin_health),
+        )
+        .route(
+            "/api/mm-admin/channels/:channel_id/posts",
+            delete(handlers::mm_admin::delete_channel_posts),
+        )
+        .route(
+            "/api/mm-admin/channels/:channel_id/archive",
+            post(handlers::mm_admin::archive_channel),
+        )
+        .route(
+            "/api/mm-admin/channels/:channel_id/unarchive",
+            post(handlers::mm_admin::unarchive_channel),
+        )
+        .route("/api/mm-admin/dm", post(handlers::mm_admin::send_dm))
         .with_state(state)
 }
 

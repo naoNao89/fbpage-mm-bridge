@@ -1,5 +1,7 @@
 //! HTTP handlers for the Facebook Graph Service
 
+pub mod mm_admin;
+
 use anyhow::Context;
 use axum::{
     extract::{Path, State},
@@ -1377,10 +1379,13 @@ pub async fn reimport_conversation(
     let _ = crate::db::clear_posted_messages(&state.pool, &conversation_id).await;
 
     // Delete all existing posts in the channel
-    let deleted = mm
+    let deleted = state
+        .mattermost_ops
         .delete_all_posts_in_channel(&channel_id)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .result
+        .deleted;
 
     tracing::info!(
         "Reimport: deleted {} posts from channel {}",
@@ -1599,7 +1604,12 @@ async fn reimport_single_conversation(
     mm.clear_root_id_db(&state.pool, conversation_id);
     let _ = crate::db::clear_posted_messages(&state.pool, conversation_id).await;
 
-    let deleted = mm.delete_all_posts_in_channel(channel_id).await?;
+    let deleted = state
+        .mattermost_ops
+        .delete_all_posts_in_channel(channel_id)
+        .await?
+        .result
+        .deleted;
 
     tracing::info!(
         "Reimport: deleted {} posts from channel {}",
@@ -1803,7 +1813,7 @@ async fn reimport_single_conversation(
     }
 
     Ok(ReimportResult {
-        deleted_posts: deleted,
+        deleted_posts: deleted.min(u64::from(u32::MAX)) as u32,
         messages_fetched: total,
         messages_posted: posted,
     })
@@ -1947,16 +1957,18 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
         mm.clear_root_id_db(&state.pool, conv_id);
         let _ = crate::db::clear_posted_messages(&state.pool, conv_id).await;
 
-        let deleted_this_channel = mm
+        let deleted_this_channel = state
+            .mattermost_ops
             .delete_all_posts_in_channel(&channel_id)
             .await
+            .map(|result| result.result.deleted)
             .unwrap_or(0);
         if deleted_this_channel > 0 {
             info!(
                 "Full history reimport: deleted {} posts from channel {}",
                 deleted_this_channel, conv_id
             );
-            summary.posts_deleted += deleted_this_channel;
+            summary.posts_deleted += deleted_this_channel.min(u64::from(u32::MAX)) as u32;
         }
 
         {
