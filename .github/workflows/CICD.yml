@@ -142,6 +142,46 @@ jobs:
       - name: Check documentation warnings
         run: RUSTDOCFLAGS="-Dwarnings" cargo doc --workspace --no-deps --document-private-items
 
+  mm-schema-test:
+    name: Mattermost Schema Test
+    runs-on: ubuntu-latest
+    needs: [build]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mattermost
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Bootstrap Mattermost release-10 schema
+        run: |
+          docker run -d --name mm-schema-bootstrap --network host \
+            -e MM_SQLSETTINGS_DRIVERNAME=postgres \
+            -e 'MM_SQLSETTINGS_DATASOURCE=postgres://postgres:postgres@localhost:5432/mattermost?sslmode=disable&connect_timeout=10' \
+            mattermost/mattermost-team-edition:release-10
+          timeout 180 bash -c '
+            until docker logs mm-schema-bootstrap 2>&1 | grep -qi "Server is listening"; do
+              sleep 5
+            done
+          '
+      - name: Run schema compatibility test
+        env:
+          MATTERMOST_SCHEMA_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/mattermost
+        run: cargo test -p facebook-graph-service --test mm_bypass_schema_test -- --ignored
+
   test-services:
     name: Test services
     runs-on: ubuntu-latest

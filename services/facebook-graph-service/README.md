@@ -18,6 +18,29 @@ This service handles the import of Facebook conversations and messages by:
 - `POST /api/import/conversation/:id` - Import single conversation by ID
 - `GET /api/status` - Get import status
 
+### Admin API (`/api/mm-admin/*`)
+
+The Mattermost admin API is intended for internal operational tooling only.
+Every endpoint requires `Authorization: Bearer $MM_ADMIN_API_TOKEN`.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/mm-admin/health` | Return bypass mode, DB availability, and Mattermost schema version |
+| `DELETE /api/mm-admin/channels/:channel_id/posts` | Delete all posts from a Mattermost channel via the selected bypass strategy |
+| `POST /api/mm-admin/channels/:channel_id/archive` | Archive a Mattermost channel |
+| `POST /api/mm-admin/channels/:channel_id/unarchive` | Unarchive a Mattermost channel |
+| `POST /api/mm-admin/dm` | Send a DM by writing directly to the Mattermost DB when bypass is enabled |
+
+`MATTERMOST_BYPASS_MODE` controls mutating endpoints:
+
+| Mode | Behavior |
+|------|----------|
+| `off` | Default. Mutating admin endpoints return `503`; existing public APIs continue to use REST API paths |
+| `shadow` | Public reimport flows use the REST API path and write audit rows; direct DM/archive endpoints remain unavailable |
+| `enabled` | DB-bypass paths are available when `MATTERMOST_DATABASE_URL` is configured |
+
+Direct DB operations are audited in `mm_bypass_audit`. The DM endpoint accepts either an `Idempotency-Key` header or `idempotency_key` JSON field.
+
 ## Environment Variables
 
 | Variable | Required | Description |
@@ -29,6 +52,13 @@ This service handles the import of Facebook conversations and messages by:
 | `FACEBOOK_PAGE_ACCESS_TOKEN` | Yes | Facebook Page Access Token |
 | `CUSTOMER_SERVICE_URL` | Yes | Customer Service URL |
 | `MESSAGE_SERVICE_URL` | Yes | Message Service URL |
+| `MATTERMOST_URL` | No | Mattermost REST API URL |
+| `MATTERMOST_USERNAME` | No | Mattermost admin username |
+| `MATTERMOST_PASSWORD` | No | Mattermost admin password |
+| `MATTERMOST_DATABASE_URL` | No | Mattermost PostgreSQL URL for direct DB-bypass operations |
+| `MATTERMOST_DATABASE_MAX_CONNECTIONS` | No | Max Mattermost DB pool connections (default: 5) |
+| `MATTERMOST_BYPASS_MODE` | No | `off`, `shadow`, or `enabled` (default: off) |
+| `MM_ADMIN_API_TOKEN` | No | Bearer token for `/api/mm-admin/*` |
 
 ## Building
 

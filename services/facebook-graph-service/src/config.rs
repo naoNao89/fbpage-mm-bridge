@@ -1,6 +1,41 @@
 use serde::Deserialize;
 use shared_utils::env_u32;
 use std::env;
+use std::str::FromStr;
+
+/// Controls whether Mattermost direct-DB-bypass operations are available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BypassMode {
+    Off,
+    Shadow,
+    Enabled,
+}
+
+impl BypassMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BypassMode::Off => "off",
+            BypassMode::Shadow => "shadow",
+            BypassMode::Enabled => "enabled",
+        }
+    }
+}
+
+impl FromStr for BypassMode {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "off" => Ok(BypassMode::Off),
+            "shadow" => Ok(BypassMode::Shadow),
+            "enabled" => Ok(BypassMode::Enabled),
+            other => Err(anyhow::anyhow!(
+                "invalid MATTERMOST_BYPASS_MODE {other:?}; expected off|shadow|enabled"
+            )),
+        }
+    }
+}
 
 /// Application configuration
 #[derive(Debug, Clone, Deserialize)]
@@ -38,6 +73,10 @@ pub struct Config {
     /// Mattermost database URL (for direct DB access bypassing API)
     pub mattermost_database_url: Option<String>,
     pub mattermost_database_max_connections: u32,
+    /// Mattermost DB-bypass mode (`off`, `shadow`, `enabled`)
+    pub mattermost_bypass_mode: BypassMode,
+    /// Bearer token required for `/api/mm-admin/*`
+    pub mm_admin_api_token: Option<String>,
     /// Rate limit warning threshold (percentage)
     #[serde(default = "default_rate_limit_warning_threshold")]
     pub rate_limit_warning_threshold: f32,
@@ -126,6 +165,11 @@ impl Config {
             mattermost_password: env::var("MATTERMOST_PASSWORD").ok(),
             mattermost_database_url: env::var("MATTERMOST_DATABASE_URL").ok(),
             mattermost_database_max_connections: env_u32("MATTERMOST_DATABASE_MAX_CONNECTIONS", 5),
+            mattermost_bypass_mode: env::var("MATTERMOST_BYPASS_MODE")
+                .unwrap_or_else(|_| "off".to_string())
+                .parse()
+                .unwrap_or(BypassMode::Off),
+            mm_admin_api_token: env::var("MM_ADMIN_API_TOKEN").ok(),
             rate_limit_warning_threshold: env::var("RATE_LIMIT_WARNING_THRESHOLD")
                 .unwrap_or_else(|_| "80.0".to_string())
                 .parse()
@@ -204,6 +248,8 @@ mod tests {
             "MATTERMOST_PASSWORD",
             "MATTERMOST_DATABASE_URL",
             "MATTERMOST_DATABASE_MAX_CONNECTIONS",
+            "MATTERMOST_BYPASS_MODE",
+            "MM_ADMIN_API_TOKEN",
             "RATE_LIMIT_WARNING_THRESHOLD",
             "RATE_LIMIT_CRITICAL_THRESHOLD",
             "POLL_INTERVAL_SECS",
@@ -236,6 +282,7 @@ mod tests {
             clear_env();
             assert_eq!(config.database_max_connections, 10);
             assert_eq!(config.mattermost_database_max_connections, 5);
+            assert_eq!(config.mattermost_bypass_mode, BypassMode::Off);
             assert_eq!(config.mattermost_url, "http://localhost:8065");
             assert_eq!(config.mattermost_username, "admin");
         });

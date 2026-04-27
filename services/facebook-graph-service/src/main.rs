@@ -1,4 +1,5 @@
-use facebook_graph_service::services::MattermostDbClient;
+use facebook_graph_service::config::BypassMode;
+use facebook_graph_service::services::{MattermostDbClient, MattermostOps};
 use facebook_graph_service::{config::Config, create_app, db, run_migrations, AppState};
 use std::net::SocketAddr;
 use tracing::{info, warn};
@@ -6,7 +7,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config = Config::from_env()?;
+    let mut config = Config::from_env()?;
 
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(&config.log_level))
@@ -51,6 +52,36 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    if let Some(db_client) = &mattermost_db {
+        match db_client.schema_version().await {
+            Ok(Some(version)) => {
+                info!("Mattermost schema-version probe: {version}");
+                if !version.starts_with("10.")
+                    && config.mattermost_bypass_mode == BypassMode::Enabled
+                {
+                    warn!(
+                        "Mattermost DB bypass requested as enabled, but schema version {version} is not release-10 compatible; downgrading to shadow"
+                    );
+                    config.mattermost_bypass_mode = BypassMode::Shadow;
+                }
+            }
+            Ok(None) => {
+                warn!("Mattermost schema-version probe returned no version");
+                if config.mattermost_bypass_mode == BypassMode::Enabled {
+                    warn!("Mattermost DB bypass requested as enabled with unknown schema version; downgrading to shadow");
+                    config.mattermost_bypass_mode = BypassMode::Shadow;
+                }
+            }
+            Err(e) => {
+                warn!("Mattermost schema-version probe failed: {e}");
+                if config.mattermost_bypass_mode == BypassMode::Enabled {
+                    warn!("Mattermost DB bypass requested as enabled but schema probe failed; downgrading to shadow");
+                    config.mattermost_bypass_mode = BypassMode::Shadow;
+                }
+            }
+        }
+    }
+
     let minio = match facebook_graph_service::storage::MinioStorage::new(
         &config.minio_endpoint,
         &config.minio_access_key,
@@ -85,6 +116,13 @@ async fn main() -> anyhow::Result<()> {
         std::sync::Arc::new(tokio::sync::RwLock::new(cache))
     };
 
+    let mattermost_ops = MattermostOps::new(
+        pool.clone(),
+        mattermost_client.clone(),
+        mattermost_db.clone(),
+        config.mattermost_bypass_mode,
+    );
+
     let state = AppState {
         pool: pool.clone(),
         config: config.clone(),
@@ -92,6 +130,7 @@ async fn main() -> anyhow::Result<()> {
         message_client,
         mattermost_client,
         mattermost_db,
+        mattermost_ops,
         minio,
         conversation_id_cache,
     };

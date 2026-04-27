@@ -2040,6 +2040,59 @@ impl MattermostClient {
         }
         Ok(deleted)
     }
+
+    /// Archive a channel using Mattermost's REST API.
+    pub async fn archive_channel(&self, channel_id: &str) -> Result<()> {
+        let auth = self.get_auth_header().await?;
+        let url = format!("{}/api/v4/channels/{channel_id}", self.base_url);
+        let resp = self
+            .client
+            .delete(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await
+            .context("Failed to archive channel via Mattermost API")?;
+
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            Err(anyhow::anyhow!(
+                "Mattermost API archive failed: {status} {body}"
+            ))
+        }
+    }
+
+    /// Unarchive a channel using Mattermost's REST API.
+    pub async fn unarchive_channel(&self, channel_id: &str) -> Result<()> {
+        let auth = self.get_auth_header().await?;
+        let url = format!("{}/api/v4/channels/{channel_id}/restore", self.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {auth}"))
+            .send()
+            .await
+            .context("Failed to unarchive channel via Mattermost API")?;
+
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            Err(anyhow::anyhow!(
+                "Mattermost API unarchive failed: {status} {body}"
+            ))
+        }
+    }
+
+    /// Cheap best-effort API call after direct DB writes.
+    pub async fn cache_nudge(&self) {
+        if let Err(e) = self.get_team_id().await {
+            tracing::warn!("Mattermost cache nudge failed: {e}");
+        }
+    }
 }
 
 // Data types for polling and channel listing
