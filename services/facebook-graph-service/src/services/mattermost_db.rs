@@ -255,7 +255,7 @@ impl MattermostDbClient {
         .bind(channelid)
         .execute(&self.pool)
         .await
-        .ok();
+        .context("Failed to update channel counters")?;
 
         tracing::info!("Sent message to channel {channelid}, post_id: {post_id}");
         Ok(post_id)
@@ -331,8 +331,8 @@ impl MattermostDbClient {
             sqlx::query(
                 r#"
                 INSERT INTO channelmembers
-                  (channelid, userid, roles, lastviewedat, msgcount, mentioncount, notifyprops)
-                VALUES ($1, $2, 'channel_user', $3, 0, 0, '{}')
+                  (channelid, userid, roles, lastviewedat, msgcount, msgcountroot, mentioncount, mentioncountroot, urgentmentioncount, notifyprops)
+                VALUES ($1, $2, 'channel_user', $3, 0, 0, 0, 0, 0, '{}')
                 ON CONFLICT (channelid, userid) DO NOTHING
                 "#,
             )
@@ -375,6 +375,20 @@ impl MattermostDbClient {
         .execute(&mut *tx)
         .await
         .context("Failed to update DM channel counters")?;
+
+        sqlx::query(
+            "UPDATE channelmembers
+             SET msgcount = COALESCE(msgcount, 0) + 1,
+                 msgcountroot = COALESCE(msgcountroot, 0) + 1,
+                 lastupdateat = $1
+             WHERE channelid = $2 AND userid <> $3",
+        )
+        .bind(now)
+        .bind(&channelid)
+        .bind(bot_userid)
+        .execute(&mut *tx)
+        .await
+        .context("Failed to update DM recipient counters")?;
 
         tx.commit()
             .await
@@ -422,7 +436,7 @@ impl MattermostDbClient {
         .bind(channelid)
         .execute(&mut *tx)
         .await
-        .ok();
+        .context("Failed to reset channel counters after soft-delete")?;
 
         tx.commit()
             .await

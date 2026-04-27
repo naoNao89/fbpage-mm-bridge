@@ -695,6 +695,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "shared-utils",
  "sqlx",
  "testcontainers",

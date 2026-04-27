@@ -110,8 +110,8 @@ async fn send_bot_dm_creates_members_post_and_reuses_sorted_channel(
 
     let (post_id, channel_id) = client.send_bot_dm(&bot, &user, "hello").await?;
     let expected_name = sorted_dm_name(&bot, &user);
-    let channel: (String, i64, i64) = sqlx::query_as(
-        "SELECT name, COALESCE(deleteat, 0), COALESCE(totalmsgcount, 0)
+    let channel: (String, i64, i64, i64) = sqlx::query_as(
+        "SELECT name, COALESCE(deleteat, 0), COALESCE(totalmsgcount, 0), COALESCE(totalmsgcountroot, 0)
          FROM channels WHERE id = $1",
     )
     .bind(&channel_id)
@@ -120,6 +120,7 @@ async fn send_bot_dm_creates_members_post_and_reuses_sorted_channel(
     assert_eq!(channel.0, expected_name);
     assert_eq!(channel.1, 0);
     assert!(channel.2 >= 1);
+    assert!(channel.3 >= 1);
 
     let members: (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM channelmembers WHERE channelid = $1")
@@ -127,6 +128,16 @@ async fn send_bot_dm_creates_members_post_and_reuses_sorted_channel(
             .fetch_one(pool)
             .await?;
     assert_eq!(members.0, 2);
+
+    let recipient_counts: (i64, i64) = sqlx::query_as(
+        "SELECT COALESCE(msgcount, 0), COALESCE(msgcountroot, 0)
+         FROM channelmembers WHERE channelid = $1 AND userid = $2",
+    )
+    .bind(&channel_id)
+    .bind(&user)
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(recipient_counts, (1, 1));
 
     let post: (String, String, String) =
         sqlx::query_as("SELECT channelid, userid, message FROM posts WHERE id = $1")

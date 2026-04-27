@@ -2,9 +2,8 @@ use crate::config::BypassMode;
 use crate::services::{MattermostClient, MattermostDbClient};
 use anyhow::{Context, Result};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::time::Instant;
 
 /// Result of a Mattermost operation that may use either REST API or DB bypass.
@@ -142,10 +141,9 @@ impl MattermostOps {
         let params_hash = hash_params([from_user_id, to_user_id, message]);
 
         if let Some(key) = idempotency_key {
-            if let Some((result_id, _)) = self.find_idempotent("send_dm", key).await? {
-                let mut parts = result_id.splitn(2, ':');
-                let post_id = parts.next().unwrap_or_default().to_string();
-                let channel_id = parts.next().unwrap_or_default().to_string();
+            if let Some((result_id, _)) = self.find_idempotent("send_dm", key, &params_hash).await?
+            {
+                let (post_id, channel_id) = parse_send_dm_result_id(&result_id)?;
                 return Ok(OperationResult {
                     result: SendDmResult {
                         post_id,
@@ -275,14 +273,14 @@ impl MattermostOps {
         &self,
         op: &str,
         idempotency_key: &str,
+        params_hash: &str,
     ) -> Result<Option<(String, String)>> {
-        let row: Option<(String, String)> = sqlx::query_as(
-            "SELECT COALESCE(result_id, ''), path_taken
+        let row: Option<(String, String, String)> = sqlx::query_as(
+            "SELECT COALESCE(result_id, ''), path_taken, params_hash
              FROM mm_bypass_audit
              WHERE op = $1
                AND idempotency_key = $2
                AND status = 'success'
-               AND created_at > NOW() - INTERVAL '24 hours'
              ORDER BY created_at DESC
              LIMIT 1",
         )
@@ -291,7 +289,14 @@ impl MattermostOps {
         .fetch_optional(&self.pool)
         .await
         .context("Failed to check Mattermost bypass idempotency")?;
-        Ok(row)
+
+        match row {
+            Some((result_id, path_taken, existing_hash)) if existing_hash == params_hash => {
+                Ok(Some((result_id, path_taken)))
+            }
+            Some(_) => anyhow::bail!("idempotency key reused with different request payload"),
+            None => Ok(None),
+        }
     }
 
     async fn audit(&self, record: AuditRecord<'_>) {
@@ -321,11 +326,22 @@ impl MattermostOps {
 }
 
 fn hash_params<const N: usize>(parts: [&str; N]) -> String {
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = Sha256::new();
     for part in parts {
-        part.hash(&mut hasher);
+        hasher.update(part.len().to_be_bytes());
+        hasher.update(part.as_bytes());
     }
-    format!("{:016x}", hasher.finish())
+    format!("{:x}", hasher.finalize())
+}
+
+fn parse_send_dm_result_id(result_id: &str) -> Result<(String, String)> {
+    let Some((post_id, channel_id)) = result_id.split_once(':') else {
+        anyhow::bail!("invalid send_dm idempotency result_id");
+    };
+    if post_id.is_empty() || channel_id.is_empty() {
+        anyhow::bail!("invalid send_dm idempotency result_id");
+    }
+    Ok((post_id.to_string(), channel_id.to_string()))
 }
 
 #[cfg(test)]
@@ -338,6 +354,8 @@ mod tests {
     fn hash_params_is_stable_for_same_inputs() {
         assert_eq!(hash_params(["a", "b"]), hash_params(["a", "b"]));
         assert_ne!(hash_params(["a", "b"]), hash_params(["b", "a"]));
+        assert_ne!(hash_params(["ab", "c"]), hash_params(["a", "bc"]));
+        assert_eq!(hash_params(["a", "b"]).len(), 64);
     }
 
     async fn test_pool() -> anyhow::Result<Option<PgPool>> {
@@ -432,17 +450,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_dm_does_not_replay_expired_idempotency_key() -> anyhow::Result<()> {
+    async fn send_dm_rejects_reused_idempotency_key_with_different_payload() -> anyhow::Result<()> {
         let Some(pool) = test_pool().await? else {
             return Ok(());
         };
         let ops = test_ops(pool.clone(), BypassMode::Enabled);
-        let key = format!("expired-{}", Uuid::new_v4());
+        let key = format!("idem-mismatch-{}", Uuid::new_v4());
 
         sqlx::query(
             "INSERT INTO mm_bypass_audit
-               (op, params_hash, path_taken, status, idempotency_key, result_id, duration_ms, created_at)
-             VALUES ('send_dm', $1, 'db', 'success', $2, $3, 1, NOW() - INTERVAL '25 hours')",
+               (op, params_hash, path_taken, status, idempotency_key, result_id, duration_ms)
+             VALUES ('send_dm', $1, 'db', 'success', $2, $3, 1)",
         )
         .bind(hash_params(["from", "to", "message"]))
         .bind(&key)
@@ -451,13 +469,44 @@ mod tests {
         .await?;
 
         let error = ops
-            .send_dm("from", "to", "message", Some(&key))
+            .send_dm("from", "to", "different message", Some(&key))
             .await
             .unwrap_err();
 
         assert!(error
             .to_string()
-            .contains("Mattermost DB client is not configured"));
+            .contains("idempotency key reused with different request payload"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn send_dm_replays_old_idempotency_key_because_index_is_not_ttl_scoped(
+    ) -> anyhow::Result<()> {
+        let Some(pool) = test_pool().await? else {
+            return Ok(());
+        };
+        let ops = test_ops(pool.clone(), BypassMode::Enabled);
+        let key = format!("expired-{}", Uuid::new_v4());
+        let post_id = Uuid::new_v4().to_string();
+        let channel_id = Uuid::new_v4().to_string();
+        let result_id = format!("{post_id}:{channel_id}");
+
+        sqlx::query(
+            "INSERT INTO mm_bypass_audit
+               (op, params_hash, path_taken, status, idempotency_key, result_id, duration_ms, created_at)
+             VALUES ('send_dm', $1, 'db', 'success', $2, $3, 1, NOW() - INTERVAL '25 hours')",
+        )
+        .bind(hash_params(["from", "to", "message"]))
+        .bind(&key)
+        .bind(&result_id)
+        .execute(&pool)
+        .await?;
+
+        let result = ops.send_dm("from", "to", "message", Some(&key)).await?;
+
+        assert_eq!(result.path, "audit");
+        assert_eq!(result.result.post_id, post_id);
+        assert_eq!(result.result.channel_id, channel_id);
         Ok(())
     }
 }

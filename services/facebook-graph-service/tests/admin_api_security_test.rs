@@ -5,11 +5,14 @@ use axum::{
 use facebook_graph_service::{
     config::{BypassMode, Config},
     create_app,
-    services::{CustomerServiceClient, MattermostClient, MattermostOps, MessageServiceClient},
+    services::{
+        CustomerServiceClient, MattermostClient, MattermostDbClient, MattermostOps,
+        MessageServiceClient,
+    },
     AppState,
 };
-use serde_json::Value;
-use sqlx::postgres::PgPoolOptions;
+use serde_json::{json, Value};
+use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 use tower::ServiceExt;
@@ -72,6 +75,34 @@ fn test_app(mode: BypassMode, token: Option<&str>) -> axum::Router {
         minio: None,
         conversation_id_cache: Arc::new(RwLock::new(HashMap::new())),
     })
+}
+
+async fn test_app_with_mattermost_db(database_url: &str) -> anyhow::Result<axum::Router> {
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(database_url)
+        .await?;
+    let config = test_config(BypassMode::Enabled, Some("test-admin-token"));
+    let mattermost_client = MattermostClient::new("http://mattermost", "admin", Some("password"));
+    let mattermost_db = MattermostDbClient::new(database_url, 2).await?;
+    let mattermost_ops = MattermostOps::new(
+        pool.clone(),
+        mattermost_client.clone(),
+        Some(mattermost_db.clone()),
+        config.mattermost_bypass_mode,
+    );
+
+    Ok(create_app(AppState {
+        pool,
+        config,
+        customer_client: CustomerServiceClient::new("http://customer"),
+        message_client: MessageServiceClient::new("http://message"),
+        mattermost_client,
+        mattermost_db: Some(mattermost_db),
+        mattermost_ops,
+        minio: None,
+        conversation_id_cache: Arc::new(RwLock::new(HashMap::new())),
+    }))
 }
 
 async fn request_json(
@@ -216,4 +247,85 @@ async fn hostile_channel_id_is_data_not_route_escape() {
 
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     assert!(!json["error"].as_str().unwrap_or_default().is_empty());
+}
+
+#[tokio::test]
+#[ignore]
+async fn docker_admin_dm_route_writes_to_mattermost_db() -> anyhow::Result<()> {
+    let database_url = std::env::var("MATTERMOST_SCHEMA_TEST_DATABASE_URL")?;
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&database_url)
+        .await?;
+    let app = test_app_with_mattermost_db(&database_url).await?;
+    let bot = seed_user(&pool, "admin-route-bot").await?;
+    let user = seed_user(&pool, "admin-route-user").await?;
+    let message = format!("admin route docker dm {}", uuid::Uuid::new_v4());
+    let body = json!({
+        "from_user_id": bot,
+        "to_user_id": user,
+        "message": message,
+    })
+    .to_string();
+
+    let (status, json) = request_json(
+        app,
+        Method::POST,
+        "/api/mm-admin/dm",
+        Some("test-admin-token"),
+        Some(&body),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["path"], "db");
+    let post_id = json["post_id"].as_str().unwrap();
+    let channel_id = json["channel_id"].as_str().unwrap();
+    assert_eq!(post_id.len(), 26);
+    assert_eq!(channel_id.len(), 26);
+
+    let post: (String, String, String) =
+        sqlx::query_as("SELECT channelid, userid, message FROM posts WHERE id = $1")
+            .bind(post_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(post.0, channel_id);
+    assert_eq!(post.1, bot);
+    assert_eq!(post.2, message);
+
+    let recipient_counts: (i64, i64) = sqlx::query_as(
+        "SELECT COALESCE(msgcount, 0), COALESCE(msgcountroot, 0)
+         FROM channelmembers WHERE channelid = $1 AND userid = $2",
+    )
+    .bind(channel_id)
+    .bind(&user)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(recipient_counts, (1, 1));
+    Ok(())
+}
+
+async fn seed_user(pool: &PgPool, label: &str) -> anyhow::Result<String> {
+    let id = uuid::Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(26)
+        .collect::<String>();
+    let now = chrono::Utc::now().timestamp_millis();
+    let username = format!("test-{label}-{id}");
+    let email = format!("{username}@example.invalid");
+    sqlx::query(
+        "INSERT INTO users
+           (id, createat, updateat, deleteat, username, email, emailverified, roles, props, notifyprops, lastpasswordupdate, lastpictureupdate, failedattempts, locale, mfaactive, lastlogin)
+         VALUES
+           ($1, $2, $2, 0, $3, $4, true, 'system_user', '{}', '{}', 0, 0, 0, 'en', false, 0)",
+    )
+    .bind(&id)
+    .bind(now)
+    .bind(username)
+    .bind(email)
+    .execute(pool)
+    .await?;
+    Ok(id)
 }
