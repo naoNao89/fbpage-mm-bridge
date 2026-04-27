@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_mm_bypass_audit_op_idempotency_key;
