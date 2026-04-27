@@ -1982,6 +1982,64 @@ impl MattermostClient {
         );
         Ok(bot_users)
     }
+
+    /// Delete every post in a channel by paging through `/posts` and issuing
+    /// `DELETE /posts/{id}` for each one. Returns the count of delete attempts.
+    ///
+    /// Best-effort: stops cleanly on the first non-success page response or
+    /// JSON parse error, and ignores individual delete failures.
+    pub async fn delete_all_posts_in_channel(&self, channel_id: &str) -> Result<u32> {
+        let auth = self.get_auth_header().await?;
+        let mut deleted = 0u32;
+        let mut page = 0u32;
+        loop {
+            let url = format!(
+                "{}/api/v4/channels/{channel_id}/posts?per_page=200&page={page}",
+                self.base_url
+            );
+            let resp = match self
+                .client
+                .get(&url)
+                .header("Authorization", format!("Bearer {auth}"))
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("delete_all_posts_in_channel: fetch failed: {e}");
+                    break;
+                }
+            };
+            if !resp.status().is_success() {
+                break;
+            }
+            let data: serde_json::Value = match resp.json().await {
+                Ok(d) => d,
+                Err(_) => break,
+            };
+            let posts = match data.get("posts").and_then(|p| p.as_object()) {
+                Some(p) => p,
+                None => break,
+            };
+            if posts.is_empty() {
+                break;
+            }
+            for (_, post) in posts {
+                if let Some(pid) = post.get("id").and_then(|i| i.as_str()) {
+                    let del_url = format!("{}/api/v4/posts/{pid}", self.base_url);
+                    let _ = self
+                        .client
+                        .delete(&del_url)
+                        .header("Authorization", format!("Bearer {auth}"))
+                        .send()
+                        .await;
+                    deleted += 1;
+                }
+            }
+            page += 1;
+        }
+        Ok(deleted)
+    }
 }
 
 // Data types for polling and channel listing
