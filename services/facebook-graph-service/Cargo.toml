@@ -30,4 +30,3 @@ shared-utils = { workspace = true }
 
 [dev-dependencies]
 wiremock = { workspace = true }
-testcontainers = "0.24"
