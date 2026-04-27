@@ -374,4 +374,73 @@ mod tests {
             assert_eq!(config.mattermost_database_max_connections, 5);
         });
     }
+
+    #[test]
+    fn from_env_defaults_invalid_bypass_mode_to_off() {
+        with_env_lock(|| {
+            clear_env();
+            set_required_env();
+            env::set_var("MATTERMOST_BYPASS_MODE", "hacker-mode");
+
+            let config = Config::from_env().unwrap();
+
+            clear_env();
+            assert_eq!(config.mattermost_bypass_mode, BypassMode::Off);
+        });
+    }
+
+    #[test]
+    fn from_env_treats_empty_admin_token_as_unset() {
+        with_env_lock(|| {
+            clear_env();
+            set_required_env();
+            env::set_var("MM_ADMIN_API_TOKEN", "");
+
+            let config = Config::from_env().unwrap();
+
+            clear_env();
+            assert!(config.mm_admin_api_token.is_none());
+        });
+    }
+
+    #[test]
+    fn debug_redacts_secrets() {
+        with_env_lock(|| {
+            clear_env();
+            set_required_env();
+            env::set_var("DATABASE_URL", "postgres://user:secret@db/facebook");
+            env::set_var("FACEBOOK_PAGE_ACCESS_TOKEN", "page-secret-token");
+            env::set_var("FACEBOOK_APP_SECRET", "app-secret");
+            env::set_var("FACEBOOK_WEBHOOK_VERIFY_TOKEN", "webhook-secret");
+            env::set_var("INSTAGRAM_WEBHOOK_VERIFY_TOKEN", "ig-webhook-secret");
+            env::set_var("MATTERMOST_PASSWORD", "mattermost-secret");
+            env::set_var(
+                "MATTERMOST_DATABASE_URL",
+                "postgres://mm:mm-secret@db/mattermost",
+            );
+            env::set_var("MM_ADMIN_API_TOKEN", "admin-secret-token");
+            env::set_var("MINIO_SECRET_KEY", "minio-secret");
+
+            let debug = format!("{:?}", Config::from_env().unwrap());
+
+            clear_env();
+            assert!(debug.contains("<redacted>"));
+            for secret in [
+                "secret@db",
+                "page-secret-token",
+                "app-secret",
+                "webhook-secret",
+                "ig-webhook-secret",
+                "mattermost-secret",
+                "mm-secret",
+                "admin-secret-token",
+                "minio-secret",
+            ] {
+                assert!(
+                    !debug.contains(secret),
+                    "debug output leaked secret fragment: {secret}"
+                );
+            }
+        });
+    }
 }

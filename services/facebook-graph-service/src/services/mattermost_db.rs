@@ -158,13 +158,15 @@ impl MattermostDbClient {
         }
 
         // Create new DM channel
-        let channelid = uuid::Uuid::new_v4().to_string();
+        let channelid = new_mattermost_id();
         let now = chrono::Utc::now().timestamp_millis();
 
         sqlx::query(
             r#"
-            INSERT INTO channels (id, name, displayname, type, teamid, createat, updateat, deleteat, header, purpose)
-            VALUES ($1, $2, 'Direct Message', 'D', NULL, $3, $3, 0, '', '')
+            INSERT INTO channels
+              (id, name, displayname, type, teamid, createat, updateat, deleteat, header, purpose,
+               lastpostat, totalmsgcount, totalmsgcountroot)
+            VALUES ($1, $2, 'Direct Message', 'D', NULL, $3, $3, 0, '', '', 0, 0, 0)
             "#,
         )
         .bind(&channelid)
@@ -214,7 +216,7 @@ impl MattermostDbClient {
         userid: &str,
         message: &str,
     ) -> Result<String> {
-        let post_id = uuid::Uuid::new_v4().to_string();
+        let post_id = new_mattermost_id();
         let now = chrono::Utc::now().timestamp_millis();
 
         // NOTE: Mattermost's `posts` table requires several NOT NULL columns
@@ -245,7 +247,8 @@ impl MattermostDbClient {
         sqlx::query(
             "UPDATE channels
              SET lastpostat = $1,
-                 totalmsgcount = totalmsgcount + 1
+                 totalmsgcount = COALESCE(totalmsgcount, 0) + 1,
+                 totalmsgcountroot = COALESCE(totalmsgcountroot, 0) + 1
              WHERE id = $2",
         )
         .bind(now)
@@ -304,14 +307,14 @@ impl MattermostDbClient {
                 id
             }
             None => {
-                let new_id = uuid::Uuid::new_v4().to_string();
+                let new_id = new_mattermost_id();
                 sqlx::query(
                     r#"
                     INSERT INTO channels
                       (id, name, displayname, type, teamid, createat, updateat,
-                       deleteat, header, purpose)
+                       deleteat, header, purpose, lastpostat, totalmsgcount, totalmsgcountroot)
                     VALUES
-                      ($1, $2, 'Direct Message', 'D', NULL, $3, $3, 0, '', '')
+                      ($1, $2, 'Direct Message', 'D', NULL, $3, $3, 0, '', '', 0, 0, 0)
                     "#,
                 )
                 .bind(&new_id)
@@ -341,7 +344,7 @@ impl MattermostDbClient {
             .context("Failed to add member to DM channel")?;
         }
 
-        let post_id = uuid::Uuid::new_v4().to_string();
+        let post_id = new_mattermost_id();
         sqlx::query(
             r#"
             INSERT INTO posts
@@ -363,14 +366,15 @@ impl MattermostDbClient {
         sqlx::query(
             "UPDATE channels
              SET lastpostat = $1,
-                 totalmsgcount = totalmsgcount + 1
+                 totalmsgcount = COALESCE(totalmsgcount, 0) + 1,
+                 totalmsgcountroot = COALESCE(totalmsgcountroot, 0) + 1
              WHERE id = $2",
         )
         .bind(now)
         .bind(&channelid)
         .execute(&mut *tx)
         .await
-        .ok();
+        .context("Failed to update DM channel counters")?;
 
         tx.commit()
             .await
@@ -411,7 +415,8 @@ impl MattermostDbClient {
         sqlx::query(
             "UPDATE channels
              SET lastpostat = 0,
-                 totalmsgcount = 0
+                 totalmsgcount = 0,
+                 totalmsgcountroot = 0
              WHERE id = $1",
         )
         .bind(channelid)
@@ -490,6 +495,15 @@ impl MattermostDbClient {
 
         Ok(channels)
     }
+}
+
+fn new_mattermost_id() -> String {
+    uuid::Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(26)
+        .collect()
 }
 
 /// Channel information from database

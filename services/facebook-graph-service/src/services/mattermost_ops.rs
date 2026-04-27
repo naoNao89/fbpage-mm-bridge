@@ -331,10 +331,133 @@ fn hash_params<const N: usize>(parts: [&str; N]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::postgres::PgPoolOptions;
+    use uuid::Uuid;
 
     #[test]
     fn hash_params_is_stable_for_same_inputs() {
         assert_eq!(hash_params(["a", "b"]), hash_params(["a", "b"]));
         assert_ne!(hash_params(["a", "b"]), hash_params(["b", "a"]));
+    }
+
+    async fn test_pool() -> anyhow::Result<Option<PgPool>> {
+        let Ok(database_url) = std::env::var("DATABASE_URL") else {
+            return Ok(None);
+        };
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&database_url)
+            .await?;
+        crate::run_migrations(&pool).await?;
+        Ok(Some(pool))
+    }
+
+    fn test_ops(pool: PgPool, mode: BypassMode) -> MattermostOps {
+        MattermostOps::new(
+            pool,
+            MattermostClient::new("http://mattermost.invalid", "admin", Some("password")),
+            None,
+            mode,
+        )
+    }
+
+    #[tokio::test]
+    async fn audit_writes_expected_row_shape() -> anyhow::Result<()> {
+        let Some(pool) = test_pool().await? else {
+            return Ok(());
+        };
+        let ops = test_ops(pool.clone(), BypassMode::Off);
+        let op = format!("test_audit_{}", Uuid::new_v4());
+        let params_hash = hash_params(["channel_id", "abc"]);
+
+        ops.audit(AuditRecord {
+            op: &op,
+            params_hash: &params_hash,
+            path_taken: "api",
+            fallback_reason: Some("shadow"),
+            status: "success",
+            idempotency_key: None,
+            result_id: None,
+            duration_ms: 42,
+        })
+        .await;
+
+        let row: (String, String, Option<String>, String, i64) = sqlx::query_as(
+            "SELECT params_hash, path_taken, fallback_reason, status, duration_ms
+             FROM mm_bypass_audit
+             WHERE op = $1
+             ORDER BY created_at DESC
+             LIMIT 1",
+        )
+        .bind(&op)
+        .fetch_one(&pool)
+        .await?;
+
+        assert_eq!(row.0, params_hash);
+        assert_eq!(row.1, "api");
+        assert_eq!(row.2.as_deref(), Some("shadow"));
+        assert_eq!(row.3, "success");
+        assert_eq!(row.4, 42);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn send_dm_replays_successful_idempotency_key_before_db_access() -> anyhow::Result<()> {
+        let Some(pool) = test_pool().await? else {
+            return Ok(());
+        };
+        let ops = test_ops(pool.clone(), BypassMode::Enabled);
+        let key = format!("idem-{}", Uuid::new_v4());
+        let post_id = Uuid::new_v4().to_string();
+        let channel_id = Uuid::new_v4().to_string();
+        let result_id = format!("{post_id}:{channel_id}");
+
+        sqlx::query(
+            "INSERT INTO mm_bypass_audit
+               (op, params_hash, path_taken, status, idempotency_key, result_id, duration_ms)
+             VALUES ('send_dm', $1, 'db', 'success', $2, $3, 1)",
+        )
+        .bind(hash_params(["from", "to", "message"]))
+        .bind(&key)
+        .bind(&result_id)
+        .execute(&pool)
+        .await?;
+
+        let result = ops.send_dm("from", "to", "message", Some(&key)).await?;
+
+        assert_eq!(result.path, "audit");
+        assert_eq!(result.result.post_id, post_id);
+        assert_eq!(result.result.channel_id, channel_id);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn send_dm_does_not_replay_expired_idempotency_key() -> anyhow::Result<()> {
+        let Some(pool) = test_pool().await? else {
+            return Ok(());
+        };
+        let ops = test_ops(pool.clone(), BypassMode::Enabled);
+        let key = format!("expired-{}", Uuid::new_v4());
+
+        sqlx::query(
+            "INSERT INTO mm_bypass_audit
+               (op, params_hash, path_taken, status, idempotency_key, result_id, duration_ms, created_at)
+             VALUES ('send_dm', $1, 'db', 'success', $2, $3, 1, NOW() - INTERVAL '25 hours')",
+        )
+        .bind(hash_params(["from", "to", "message"]))
+        .bind(&key)
+        .bind("old-post:old-channel")
+        .execute(&pool)
+        .await?;
+
+        let error = ops
+            .send_dm("from", "to", "message", Some(&key))
+            .await
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("Mattermost DB client is not configured"));
+        Ok(())
     }
 }
