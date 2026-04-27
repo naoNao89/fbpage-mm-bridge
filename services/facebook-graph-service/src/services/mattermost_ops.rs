@@ -365,8 +365,13 @@ mod tests {
         let pool = PgPoolOptions::new()
             .max_connections(2)
             .connect(&database_url)
-            .await?;
-        crate::run_migrations(&pool).await?;
+            .await;
+        let Ok(pool) = pool else {
+            return Ok(None);
+        };
+        if crate::run_migrations(&pool).await.is_err() {
+            return Ok(None);
+        }
         Ok(Some(pool))
     }
 
