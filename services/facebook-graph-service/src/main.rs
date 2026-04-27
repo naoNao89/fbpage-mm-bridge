@@ -55,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(db_client) = &mattermost_db {
         match db_client.schema_version().await {
             Ok(Some(version)) => {
-                info!("Mattermost schema-version probe: {version}");
+                info!("Mattermost server-version probe: {version}");
                 if !version.starts_with("10.")
                     && config.mattermost_bypass_mode == BypassMode::Enabled
                 {
@@ -66,14 +66,14 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             Ok(None) => {
-                warn!("Mattermost schema-version probe returned no version");
+                warn!("Mattermost server-version probe returned no version");
                 if config.mattermost_bypass_mode == BypassMode::Enabled {
                     warn!("Mattermost DB bypass requested as enabled with unknown schema version; downgrading to shadow");
                     config.mattermost_bypass_mode = BypassMode::Shadow;
                 }
             }
             Err(e) => {
-                warn!("Mattermost schema-version probe failed: {e}");
+                warn!("Mattermost server-version probe failed: {e}");
                 if config.mattermost_bypass_mode == BypassMode::Enabled {
                     warn!("Mattermost DB bypass requested as enabled but schema probe failed; downgrading to shadow");
                     config.mattermost_bypass_mode = BypassMode::Shadow;
