@@ -1377,51 +1377,10 @@ pub async fn reimport_conversation(
     let _ = crate::db::clear_posted_messages(&state.pool, &conversation_id).await;
 
     // Delete all existing posts in the channel
-    let auth = mm
-        .get_auth_header()
+    let deleted = mm
+        .delete_all_posts_in_channel(&channel_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let client = reqwest::Client::new();
-    let mut deleted = 0u32;
-    let mut page = 0u32;
-    let base = state.config.mattermost_url.trim_end_matches('/');
-    loop {
-        let url = format!("{base}/api/v4/channels/{channel_id}/posts?per_page=200&page={page}",);
-        let resp = client
-            .get(&url)
-            .header("Authorization", format!("Bearer {auth}"))
-            .send()
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-        if !resp.status().is_success() {
-            break;
-        }
-
-        let data: serde_json::Value = resp.json().await.unwrap_or_default();
-        let posts = match data.get("posts").and_then(|p| p.as_object()) {
-            Some(p) => p,
-            None => break,
-        };
-
-        if posts.is_empty() {
-            break;
-        }
-
-        for (_, post) in posts {
-            if let Some(pid) = post.get("id").and_then(|i| i.as_str()) {
-                let del_url = format!("{base}/api/v4/posts/{pid}");
-                let _ = client
-                    .delete(&del_url)
-                    .header("Authorization", format!("Bearer {auth}"))
-                    .send()
-                    .await;
-                deleted += 1;
-            }
-        }
-
-        page += 1;
-    }
 
     tracing::info!(
         "Reimport: deleted {} posts from channel {}",
@@ -1640,48 +1599,7 @@ async fn reimport_single_conversation(
     mm.clear_root_id_db(&state.pool, conversation_id);
     let _ = crate::db::clear_posted_messages(&state.pool, conversation_id).await;
 
-    let auth = mm.get_auth_header().await?;
-    let client = reqwest::Client::new();
-    let mut deleted = 0u32;
-    let mut page = 0u32;
-    let base = state.config.mattermost_url.trim_end_matches('/');
-    loop {
-        let url = format!("{base}/api/v4/channels/{channel_id}/posts?per_page=200&page={page}",);
-        let resp = client
-            .get(&url)
-            .header("Authorization", format!("Bearer {auth}"))
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to fetch posts: {e}"))?;
-
-        if !resp.status().is_success() {
-            break;
-        }
-
-        let data: serde_json::Value = resp.json().await.unwrap_or_default();
-        let posts = match data.get("posts").and_then(|p| p.as_object()) {
-            Some(p) => p,
-            None => break,
-        };
-
-        if posts.is_empty() {
-            break;
-        }
-
-        for (_, post) in posts {
-            if let Some(pid) = post.get("id").and_then(|i| i.as_str()) {
-                let del_url = format!("{base}/api/v4/posts/{pid}");
-                let _ = client
-                    .delete(&del_url)
-                    .header("Authorization", format!("Bearer {auth}"))
-                    .send()
-                    .await;
-                deleted += 1;
-            }
-        }
-
-        page += 1;
-    }
+    let deleted = mm.delete_all_posts_in_channel(channel_id).await?;
 
     tracing::info!(
         "Reimport: deleted {} posts from channel {}",
@@ -2029,49 +1947,10 @@ async fn full_history_reimport_task(state: &AppState) -> Result<FullHistorySumma
         mm.clear_root_id_db(&state.pool, conv_id);
         let _ = crate::db::clear_posted_messages(&state.pool, conv_id).await;
 
-        let auth = mm.get_auth_header().await?;
-        let client = reqwest::Client::new();
-        let base = state.config.mattermost_url.trim_end_matches('/');
-        let mut deleted_this_channel = 0u32;
-        let mut page = 0u32;
-        loop {
-            let url = format!("{base}/api/v4/channels/{channel_id}/posts?per_page=200&page={page}");
-            let resp = match client
-                .get(&url)
-                .header("Authorization", format!("Bearer {auth}"))
-                .send()
-                .await
-            {
-                Ok(r) => r,
-                Err(_) => break,
-            };
-            if !resp.status().is_success() {
-                break;
-            }
-            let data: serde_json::Value = match resp.json().await {
-                Ok(d) => d,
-                Err(_) => break,
-            };
-            let posts = match data.get("posts").and_then(|p| p.as_object()) {
-                Some(p) => p,
-                None => break,
-            };
-            if posts.is_empty() {
-                break;
-            }
-            for (_, post) in posts {
-                if let Some(pid) = post.get("id").and_then(|i| i.as_str()) {
-                    let del_url = format!("{base}/api/v4/posts/{pid}");
-                    let _ = client
-                        .delete(&del_url)
-                        .header("Authorization", format!("Bearer {auth}"))
-                        .send()
-                        .await;
-                    deleted_this_channel += 1;
-                }
-            }
-            page += 1;
-        }
+        let deleted_this_channel = mm
+            .delete_all_posts_in_channel(&channel_id)
+            .await
+            .unwrap_or(0);
         if deleted_this_channel > 0 {
             info!(
                 "Full history reimport: deleted {} posts from channel {}",

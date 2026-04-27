@@ -182,10 +182,15 @@ impl MattermostDbClient {
     pub async fn add_user_to_dm_channel(&self, channelid: &str, userid: &str) -> Result<()> {
         let now = chrono::Utc::now().timestamp_millis();
 
+        // NOTE: Mattermost columns are lowercase, no underscores (`mentioncount`, not
+        // `mention_count`). Setting only the columns that have existed since v5.x;
+        // newer columns (`mentioncountroot`, `msgcountroot`, `urgentmentioncount`,
+        // `lastupdateat`, `schemeuser`, `schemeadmin`, `schemeguest`) all have
+        // sane defaults in their respective Mattermost migrations.
         sqlx::query(
             r#"
-            INSERT INTO channelmembers (channelid, userid, roles, lastviewedat, msgcount, mention_count)
-            VALUES ($1, $2, 'channel_user', $3, 0, 0)
+            INSERT INTO channelmembers (channelid, userid, roles, lastviewedat, msgcount, mentioncount, notifyprops)
+            VALUES ($1, $2, 'channel_user', $3, 0, 0, '{}')
             ON CONFLICT (channelid, userid) DO NOTHING
             "#,
         )
@@ -212,10 +217,18 @@ impl MattermostDbClient {
         let post_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().timestamp_millis();
 
+        // NOTE: Mattermost's `posts` table requires several NOT NULL columns
+        // (`originalid`, `type`, `hashtags`, `fileids`) that all default to ''/'[]'.
+        // `rootid` must be a string (often '' for top-level posts), not NULL.
+        // We omit the realtime websocket broadcast that the API would normally
+        // emit, so connected clients won't see the post until reconnect.
         sqlx::query(
             r#"
-            INSERT INTO posts (id, channelid, userid, message, createat, updateat, deleteat, rootid, props)
-            VALUES ($1, $2, $3, $4, $5, $5, 0, NULL, '{}')
+            INSERT INTO posts
+              (id, channelid, userid, message, createat, updateat, editat, deleteat,
+               rootid, originalid, type, hashtags, fileids, hasreactions, props)
+            VALUES
+              ($1, $2, $3, $4, $5, $5, 0, 0, '', '', '', '', '[]', false, '{}')
             "#,
         )
         .bind(&post_id)
@@ -227,12 +240,19 @@ impl MattermostDbClient {
         .await
         .context("Failed to insert post")?;
 
-        sqlx::query("UPDATE channels SET lastpostat = $1 WHERE id = $2")
-            .bind(now)
-            .bind(channelid)
-            .execute(&self.pool)
-            .await
-            .ok();
+        // Bump channel-level denormalized counters so Mattermost's UI shows
+        // accurate unread counts and last-post times.
+        sqlx::query(
+            "UPDATE channels
+             SET lastpostat = $1,
+                 totalmsgcount = totalmsgcount + 1
+             WHERE id = $2",
+        )
+        .bind(now)
+        .bind(channelid)
+        .execute(&self.pool)
+        .await
+        .ok();
 
         tracing::info!("Sent message to channel {channelid}, post_id: {post_id}");
         Ok(post_id)
